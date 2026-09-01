@@ -1,6 +1,6 @@
 # algot — 多 Timeframe 与 live 语义规范
 
-> 状态：草案 v0.1（2026-08-31）
+> 状态：草案 v0.2（2026-09-02）
 > 上游：`docs/00-vision.md §3`（核心规范）、`docs/00-vision.md §1.2`（信号解耦）
 > 下游：`docs/02-data-layer.md`（数据层）、`docs/03-algorithms.md`（算法层）、`docs/05-signals.md`（信号抽象，待写）
 
@@ -93,13 +93,32 @@ mean(resample(rsi(close, 14), 1, "day", agg="mean"), 5)
 │  • algot run --live     （opt-in live）      │
 │  • config.yaml: mode: live   （等价写法）     │
 ├────────────────────────────────────────────┤
-│  Per-call override（escape hatch）           │
+│  Per-TF 配置（精细覆盖，v0.2 新增）          │
+│  • config.yaml:                              │
+│      live_by_tf:                             │
+│        day: { 1: live }                      │
+│        min: { 5: closed }                    │
+│  • CLI:                                      │
+│      --live-tf "day:1=live,min:5=closed"     │
+│  • 命中 → 取值；未命中 → fall through        │
+├────────────────────────────────────────────┤
+│  Per-call override（escape hatch，永override）│
 │  • resample(..., live=True)                 │
 │  • resample(..., live=False)                │
 └────────────────────────────────────────────┘
 
-> per-TF / per-symbol 不做（YAGNI，未来真需要再加）
+> per-TF 走 (N, unit) 元组定位（短长共存如 `day`/`d`，normalize 到 long 查 config）；
+> per-symbol 不做（YAGNI）。
 ```
+
+**优先级（高 → 低）**：
+
+1. per-call `live=` kwarg（永 override）
+2. `live_by_tf` config / `--live-tf` CLI（命中取；未命中 fall through）
+3. run-level `mode: live` / `--live` flag
+4. 兜底 `closed`（no-look-ahead 默认）
+
+**unit 规范化**：`resample(seq, N, unit)` 接受短长两种 unit 写法（如 `day`/`d`），查 `live_by_tf` 时内部 normalize 到 long form，所以 `resample(close, 1, "d")` 跟 `resample(close, 1, "day")` 命中同一条。
 
 ### 3.2 默认值
 
