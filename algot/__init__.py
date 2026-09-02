@@ -54,8 +54,12 @@ __all__ = [
 ]
 
 
-# Lazy-import builtins to avoid circular: _core depends on nothing in algot,
-# but builtins uses Sequence + plugin. Let me just import them explicitly.
+# Eager-import builtins. Order matters:
+#   1. sequence + signal (no internal deps)
+#   2. source (depends on sequence)
+#   3. algo.plugin (depends on _core)
+#   4. _core (registry)
+#   5. builtins.factor (depends on plugin + sequence)
 from algot.source import BaseSource, SqliteSource
 from algot.algo.plugin import plugin
 from algot.algo._core import _REGISTRY

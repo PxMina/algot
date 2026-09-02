@@ -179,34 +179,33 @@ def rsi(x):
     gains = np.where(deltas > 0, deltas, 0.0)
     losses = np.where(deltas < 0, -deltas, 0.0)
 
-    result = np.full(n, np.nan, dtype=np.float64)
+    # Work on raw np.ndarray, then wrap at end (faster, avoids __setitem__ overhead)
+    raw = np.full(n, np.nan, dtype=np.float64)
 
-    # First RSI at result[period] (position period from current = period steps back)
-    # In seq indexing: result[period] is the bar 'period' steps back.
-    # The avg_gain at this point is the mean of gains[:period] (period deltas).
+    # First RSI at chronological position period (bar 'period' steps back from current)
+    # avg_gain at this point = mean of gains[:period] (period deltas = first `period` bars of data)
     avg_gain = float(np.mean(gains[:period]))
     avg_loss = float(np.mean(losses[:period]))
 
     if avg_loss == 0:
-        result[period] = 100.0
+        raw[period] = 100.0
     else:
         rs = avg_gain / avg_loss
-        result[period] = 100.0 - 100.0 / (1.0 + rs)
+        raw[period] = 100.0 - 100.0 / (1.0 + rs)
 
     # Wilder's smoothing: avg = (avg·(period-1) + new) / period
     for i in range(period + 1, n):
         # gains[i-1] is the gain at delta index i-1 = data[i] - data[i-1]
-        # In seq terms, this is the gain for the bar at seq[n-1-i]
         avg_gain = (avg_gain * (period - 1) + gains[i - 1]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i - 1]) / period
 
         if avg_loss == 0:
-            result[i] = 100.0
+            raw[i] = 100.0
         else:
             rs = avg_gain / avg_loss
-            result[i] = 100.0 - 100.0 / (1.0 + rs)
+            raw[i] = 100.0 - 100.0 / (1.0 + rs)
 
-    return Sequence(data=result, meta=dict(seq.meta), index=seq.index)
+    return Sequence(data=raw, meta=dict(seq.meta), index=seq.index)
 
 
 # ---------- atr ----------
@@ -239,15 +238,15 @@ def atr(x):
         pc = bars.close.data[i - 1]
         tr[i - 1] = max(h - l, abs(h - pc), abs(l - pc))
 
-    # Result: NaN for first bar (no prev close), then seeded with SMA at result[period]
-    result = np.full(n, np.nan, dtype=np.float64)
-    result[period] = float(np.mean(tr[:period]))
+    # Result: NaN for first bar (no prev close), then seeded with SMA at position period
+    raw = np.full(n, np.nan, dtype=np.float64)
+    raw[period] = float(np.mean(tr[:period]))
 
     # Wilder's smoothing
     for i in range(period, n - 1):
-        result[i + 1] = (result[i] * (period - 1) + tr[i]) / period
+        raw[i + 1] = (raw[i] * (period - 1) + tr[i]) / period
 
-    return Sequence(data=result, meta=dict(bars.close.meta), index=bars.close.index)
+    return Sequence(data=raw, meta=dict(bars.close.meta), index=bars.close.index)
 
 
 # ---------- adx ----------
@@ -324,14 +323,14 @@ def adx(x):
             dx[i] = 100.0 * abs(plus_di[i] - minus_di[i]) / denom
 
     # ADX = Wilder-smoothed mean of DX
-    result = np.full(n, np.nan, dtype=np.float64)
+    raw = np.full(n, np.nan, dtype=np.float64)
     if len(dx) >= period * 2:
         adx_val = float(np.mean(dx[:period]))
-        result[period * 2] = adx_val
+        raw[period * 2] = adx_val
         for i in range(period * 2 + 1, n):
-            result[i] = (result[i - 1] * (period - 1) + dx[i - 1 - period]) / period
+            raw[i] = (raw[i - 1] * (period - 1) + dx[i - 1 - period]) / period
 
-    return Sequence(data=result, meta=dict(bars.close.meta), index=bars.close.index)
+    return Sequence(data=raw, meta=dict(bars.close.meta), index=bars.close.index)
 
 
 # ---------- stddev ----------
@@ -379,7 +378,7 @@ def vwap(x):
     bars = _ensure_ohlcv(x)
     n = len(bars)
 
-    result = np.full(n, np.nan, dtype=np.float64)
+    raw = np.full(n, np.nan, dtype=np.float64)
     cum_pv = 0.0
     cum_v = 0.0
     for i in range(n):
@@ -387,8 +386,8 @@ def vwap(x):
         cum_pv += tp * bars.volume.data[i]
         cum_v += bars.volume.data[i]
         if cum_v > 0:
-            result[i] = cum_pv / cum_v
-    return Sequence(data=result, meta=dict(bars.close.meta), index=bars.close.index)
+            raw[i] = cum_pv / cum_v
+    return Sequence(data=raw, meta=dict(bars.close.meta), index=bars.close.index)
 
 
 # ---------- donchian_high / donchian_low ----------

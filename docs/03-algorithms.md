@@ -111,15 +111,15 @@ def sma(close: Sequence, n: int = 20) -> Sequence:
     stateful=True,
     min_bars=1,
 )
-def crossover_above(close: Sequence, threshold: float = 100.0) -> Signal | None:
-    # state 是框架注入的局部变量（dict 默认；详见 §8.2）
+def crossover_above(close: Sequence, threshold: float = 100.0, state: dict | None = None) -> Signal | None:
+    # state 是框架注入的 kwarg 参数（详见 §8.2）
     if state["prev_close"] is None:
         state["prev_close"] = close[0]
         return None
-    
+
     crossed = (state["prev_close"] < threshold) and (close[0] >= threshold)
     state["prev_close"] = close[0]
-    
+
     if crossed:
         # 完整 Signal API 见 05 §7；导入：from algot import Direction, MarketOrder, FixedSize
         return Signal(
@@ -374,23 +374,25 @@ def divide_by_close(x, close, n=20):
     shape_in={"close": "Sequence[float64]"},
     shape_out="Signal | None",
 )
-def my_signal(close):
+def my_signal(close, state):
     sma_val = sma(close, 20)[0]
-    
+
     if state["last_sma"] is None:
         state["last_sma"] = sma_val
         return None
-    
+
     crossed = state["last_sma"] < sma_val
     state["last_sma"] = sma_val
-    
+
     return Signal(...) if crossed else None
 ```
 
 **关键细节**：
-- `state` 是**框架注入**的局部变量（dict / dataclass 实例），无需参数声明
-- Plugin 函数体直接读写 `state["key"]`
+- `state` 是**框架注入**的 kwarg 参数（dict / dataclass 实例），必须出现在函数签名里
+- Plugin 函数体通过 `state["key"]` 读写 (dict schema) 或 `state.key` (dataclass 实例经 StatefulState 包装后通过 `state["key"]`)
 - 框架在每次 plugin 调用前注入 `state`，调用后读取 `state` 写盘
+- **设计变更 (M2 实施后)**: 原 spec 写 "无需参数声明"，但 Python 函数体内访问 `state` 必须通过参数/closure/global。原 v1 采用 kwarg 注入形式 (`def f(x, state):`)；bytecode magic-local 形式可行但脆弱，未采纳。
+- 装饰器装饰时校验: stateful=True 必须有 `state` 参数 (否则 ValueError 早爆)
 
 ### 8.2 state_type 选项
 

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import pytest
 
 import algot.algo
+from algot import Sequence
 from algot.algo import (
     _REGISTRY,
     PluginCall,
@@ -371,3 +372,87 @@ def test_stateless_plugin_init_state_no_op():
     pc = get_plugin("f")
     pc.init_state()  # should not raise
     assert pc.get_state() is None
+
+
+# ---------- state injection via pc.call(state=...) ----------
+
+def test_call_explicit_state_overrides_default():
+    """pc.call(state=...) overrides the default state set by init_state()."""
+    @plugin(category="signal", stateful=True, state_type={"x": 0})
+    def s(dep, state):
+        return state["x"]
+
+    pc = get_plugin("s")
+    pc.init_state()
+    # init_state set state["x"] = 0; explicit state={"x": 99} should win
+    result = pc.call(deps_kwds={"dep": "anything"}, state={"x": 99})
+    assert result == 99
+
+
+def test_call_stateful_without_init_state_raises():
+    """Calling a stateful plugin without init_state() and without state= raises."""
+    @plugin(category="signal", stateful=True, state_type={"x": 0})
+    def s(dep, state):
+        return state["x"]
+
+    pc = get_plugin("s")
+    # No init_state(), no state= → should raise RuntimeError
+    with pytest.raises(RuntimeError, match="stateful but no state provided"):
+        pc.call(deps_kwds={"dep": "anything"})
+
+
+# ---------- state_type dataclass wrapping (per G3) ----------
+
+def test_state_type_dataclass_with_to_dict():
+    """Dataclass state with to_dict() method is wrapped properly."""
+    @dataclass
+    class MyState:
+        prev: float = 0.0
+        bars: int = 0
+
+        def to_dict(self):
+            return {"prev": self.prev, "bars": self.bars}
+
+    @plugin(category="signal", stateful=True, state_type=MyState)
+    def s(x, state):
+        state["bars"] += 1
+        return state["bars"]
+
+    pc = get_plugin("s")
+    pc.init_state()
+    assert pc.get_state()["bars"] == 0
+    pc.call(deps_kwds={"x": 1})
+    assert pc.get_state()["bars"] == 1
+
+
+def test_state_type_dataclass_without_to_dict_raises():
+    """Dataclass without to_dict() raises ValueError at init_state()."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class BareState:
+        x: int = 0
+        # no to_dict method
+
+    @plugin(category="signal", stateful=True, state_type=BareState)
+    def s(x, state):
+        return state["x"]
+
+    pc = get_plugin("s")
+    with pytest.raises(ValueError, match="must inherit from StatefulState or expose to_dict"):
+        pc.init_state()
+
+
+# ---------- direct __call__ with deps_kwds ----------
+
+def test_direct_call_with_named_args():
+    """algot.sma(x) style: positional/named args bind via signature."""
+    import algot
+    import numpy as np
+    data = np.arange(21, dtype=np.float64) + 1  # 1..21
+    seq = Sequence(data=data, meta={"symbol": "X"}, index=None)
+
+    # Direct call: positional arg
+    result = algot.sma(seq)
+    # result.data[19] = mean(data[0:20]) = 10.5
+    assert result.data[19] == 10.5
