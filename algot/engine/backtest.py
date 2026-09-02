@@ -4,19 +4,31 @@ v1 execution model:
     - Load full OHLCV for (symbol, timeframe) once from source.
     - Factor plugins: computed ONCE over the full series (vectorized).
       Each factor output is a full-length Sequence.
-    - For each bar i (chronological), build per-bar views: factor outputs
-      sliced to bars [0..i] so that inside a signal plugin `seq[0]` is the
-      current bar and `seq[N]` is N bars back (02 §2.2 semantics).
+    - For each bar i (chronological), build per-bar views: raw inputs,
+      factor outputs AND the OHLCVSequence `bars` sliced to [0..i] so that
+      inside a signal plugin `seq[0]` is the current bar and `seq[N]` is N
+      bars back (02 §2.2 semantics).
     - Signal plugins are called per bar with those views; framework drops
       emissions while bar_idx < effective min_bars (G1) + logs INFO at end.
     - Collected signals → BacktestBroker.submit (G2 exec_lag fill).
 
-v1 scope: single strategy instance; signal plugin deps resolved from the
-strategy's declared signal plugin name (registered via @algot.plugin).
+Signal plugin input space (03 §10.2):
+    close/open/high/low/volume  — raw Sequences
+    bars                        — OHLCVSequence (atr/vwap/adx family)
+    <factor_name>               — dep factor output (registered via deps=[...]
+                                  or declared as a signature param); factor
+                                  inputs bound by shape_in dtype (default price
+                                  = close).  Parameterized factor calls
+                                  (sma(close, n=5)) are done inside the plugin
+                                  body per 03 §8.1.
+
+v1 scope: single strategy instance; single signal plugin; single symbol
+(multi-symbol = host for-loop per 06 §6.2).
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import datetime
 from typing import Any
@@ -103,9 +115,9 @@ class BacktestEngine:
         raw = {name: getattr(bars, name) for name in _RAW_INPUTS}
         factor_out: dict[str, Sequence] = {}
         inputs: dict[str, Any] = dict(raw)
+        inputs["bars"] = bars  # OHLCVSequence — OHLCV factors (atr/vwap/adx)
 
         # Resolve signal plugin signature: params it needs.
-        import inspect
         sig_params = inspect.signature(self._signal_pc.func).parameters
         # deps declared on the plugin take precedence for factor wiring
         ordered_factors: list[str] = []
@@ -115,7 +127,7 @@ class BacktestEngine:
                     ordered_factors.append(dep)
         # any remaining factor-type params from the signature
         for pname in sig_params:
-            if pname in ("state",) or pname in _RAW_INPUTS:
+            if pname in ("state",) or pname in inputs:
                 continue
             if pname in _REGISTRY and _REGISTRY[pname].category == "factor":
                 if pname not in ordered_factors:
@@ -123,15 +135,7 @@ class BacktestEngine:
 
         for fname in ordered_factors:
             fpc: PluginCall = _REGISTRY[fname]
-            # bind factor params: raw inputs by param name
-            fkwargs: dict[str, Any] = {}
-            for pname in inspect.signature(fpc.func).parameters:
-                if pname in raw:
-                    fkwargs[pname] = raw[pname]
-                elif pname == "n" or pname == "period":
-                    # default param n already bound by signature default;
-                    # call without explicit override
-                    continue
+            fkwargs = self._bind_factor_inputs(fpc, inputs)
             result = fpc.call(deps_kwds=fkwargs, state=None)
             if not isinstance(result, Sequence):
                 raise TypeError(
@@ -197,10 +201,40 @@ class BacktestEngine:
 
     # ---------- helpers ----------
 
+    def _bind_factor_inputs(self, fpc: PluginCall, inputs: dict[str, Any]) -> dict:
+        """Bind a factor plugin's inputs by shape_in dtype semantics.
+
+        Rules (per 03 §10.2 plugin-store wiring):
+          1. param name present in inputs (raw / bars / earlier factor) → use it
+          2. dtype OHLCVSequence → inputs['bars']
+          3. dtype Sequence[float64] (or Sequence) → inputs['close'] (default price)
+        Parameter defaults (e.g. `n=20`) are left to the function signature.
+        """
+        fkwargs: dict[str, Any] = {}
+        for pname, dtype in fpc.shape_in.items():
+            if pname in inputs:
+                fkwargs[pname] = inputs[pname]
+            elif dtype == "OHLCVSequence":
+                fkwargs[pname] = inputs["bars"]
+            elif dtype.startswith("Sequence") or dtype == "ndarray":
+                fkwargs[pname] = inputs["close"]
+            else:
+                raise KeyError(
+                    f"factor {fpc.name!r}: cannot bind input {pname!r} "
+                    f"(dtype {dtype}); available: {sorted(inputs.keys())}"
+                )
+        return fkwargs
+
     def _call_signal(self, inputs: dict[str, Any], i: int) -> Signal | None:
-        """Call signal plugin with per-bar views ending at bar i."""
+        """Call signal plugin with per-bar views ending at bar i.
+
+        View types mirror their source:
+          - raw Sequence (close/open/…)        → Sequence  view (data[:i+1])
+          - factor output Sequence              → Sequence  view
+          - bars (OHLCVSequence)                → OHLCVSequence view (all fields)
+        Inside the plugin, seq[0] = current bar, seq[N] = N bars back.
+        """
         views: dict[str, Any] = {}
-        import inspect
         for pname, p in inspect.signature(self._signal_pc.func).parameters.items():
             if pname == "state":
                 continue
@@ -210,14 +244,7 @@ class BacktestEngine:
                     f"available: {sorted(inputs.keys())}"
                 )
             src = inputs[pname]
-            # slice view: bars [0..i] of the underlying data
-            data_view = src.data[: i + 1]
-            idx_view = src.index[: i + 1] if src.index is not None else None
-            views[pname] = Sequence(
-                data=data_view,
-                meta=dict(src.meta),
-                index=idx_view,
-            )
+            views[pname] = self._view(src, i)
         result = self._signal_pc.call(
             deps_kwds=views, state=self._signal_pc.get_state()
         )
@@ -229,6 +256,33 @@ class BacktestEngine:
                 f"{type(result).__name__}, expected Signal | None"
             )
         return result
+
+    @staticmethod
+    def _view(src: Any, i: int) -> Any:
+        """Slice full-series source to bars [0..i] (current bar = index i)."""
+        if isinstance(src, OHLCVSequence):
+            return OHLCVSequence(
+                open=Sequence(src.open.data[: i + 1], dict(src.open.meta),
+                              src.open.index[: i + 1]),
+                high=Sequence(src.high.data[: i + 1], dict(src.high.meta),
+                              src.high.index[: i + 1]),
+                low=Sequence(src.low.data[: i + 1], dict(src.low.meta),
+                             src.low.index[: i + 1]),
+                close=Sequence(src.close.data[: i + 1], dict(src.close.meta),
+                               src.close.index[: i + 1]),
+                volume=Sequence(src.volume.data[: i + 1], dict(src.volume.meta),
+                                src.volume.index[: i + 1]),
+            )
+        if isinstance(src, Sequence):
+            return Sequence(
+                data=src.data[: i + 1],
+                meta=dict(src.meta),
+                index=src.index[: i + 1] if src.index is not None else None,
+            )
+        raise TypeError(
+            f"cannot build bar view for {type(src).__name__}; "
+            f"expected Sequence | OHLCVSequence"
+        )
 
     def _make_lookup(self, bars: OHLCVSequence):
         """fill_price_lookup(symbol, bar_time, field) → open at bar_time."""

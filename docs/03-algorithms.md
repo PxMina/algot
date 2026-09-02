@@ -651,22 +651,40 @@ _store: dict[str, Any] = {
 }
 ```
 
-**Signal plugin 访问 factor 输出**：
+**Signal plugin 访问 factor 输出**（v1 实际语义, M3 review 对齐）:
+
+signal 的输入空间由框架注入, 逐 bar 提供截至当前 bar 的 view
+(`seq[0]` = 当前 bar, `seq[N]` = N bars back):
+
+| 参数名 | 类型 | 来源 |
+|---|---|---|
+| `close` / `open` / `high` / `low` / `volume` | Sequence | 当前 symbol 的 raw 数据 |
+| `bars` | OHLCVSequence | 当前 symbol 全字段 (OHLCV 因子 atr/vwap/adx 需要) |
+| `<factor_name>` | Sequence | deps 因子的全量输出 (预计算一次, 默认参数) |
+
 ```python
+@algot.plugin(category="signal", deps=["sma"], ...)
+def my_signal(close, sma):        # sma = 框架预计算的 sma(close, 20)
+    ...
+
 @algot.plugin(category="signal", ...)
-def my_signal(close):
-    sma20 = algot.get_factor("sma_20")   # ← 框架注入 helper
+def my_signal(bars, state):        # OHLCV 因子在函数体内直接用
+    atr14 = algot.atr(bars, n=14)
     ...
 ```
 
-或直接通过依赖注入：
-```python
-@algot.plugin(category="signal", deps=["sma_20"], ...)
-def my_signal(close, sma_20):           # ← deps 自动注入参数
-    ...
-```
+**关键规则**（M3 review 修正）:
+1. **deps 名 = registry 因子名**（`sma`/`atr`, 无 n 后缀）; deps 因子用**默认参数**预计算
+   全量一次, 结果注入 signal 签名同名参数。
+2. **因子输入绑定**: deps 因子的输入按 `shape_in` dtype 解析——
+   `Sequence[float64]` 参数绑 `close`（默认价格序列）, `OHLCVSequence` 参数绑 `bars`。
+3. **参数化因子调用**（`sma(close, n=5)` / `atr(bars, n=14)`）在 signal
+   函数体内直接调用（03 §8.1 风格）——deps 只能表达默认参数配置。
+4. **Cycle 处理**: deps 形成环 → 注册时 raise。
+5. **未声明 deps**: plugin 顺序按 registration 顺序 (file order)。
 
-**v1 推荐 deps 注入**（更声明式）。
+v1 两种风格并存: 默认参数因子用 deps 注入（预计算、避免重复算）;
+多配置因子在函数体内直接调用。
 
 ### 10.3 Backtest vs Live 差异
 

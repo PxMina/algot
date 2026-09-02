@@ -33,10 +33,16 @@ from algot.source.sqlite import SqliteSource
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
-    """golden_cross registers a user signal plugin; clean up after."""
-    clear_registry()
+    """Isolate per-test plugin registrations while keeping built-in factors.
+
+    Built-in factors (sma/atr/...) register at `import algot` time.  A full
+    clear_registry() would drop them and break engine deps wiring; instead
+    snapshot before, and restore after each test.
+    """
+    before = dict(_REGISTRY)
     yield
-    clear_registry()
+    _REGISTRY.clear()
+    _REGISTRY.update(before)
 
 
 @pytest.fixture(scope="module")
@@ -203,3 +209,120 @@ def test_engine_rejects_unknown_signal():
     from algot.engine.backtest import BacktestEngine
     with pytest.raises(KeyError, match="nope"):
         BacktestEngine(strat, None, "AAPL", (1, "min"))
+
+
+# ---------- engine input-space tests (M3 review: deps wiring + bars) ----------
+
+def _db_with_wave(tmp_path_factory):
+    """Reusable wave-pattern DB (same shape as golden_cross fixture)."""
+    import sqlite3
+    db = tmp_path_factory.mktemp("wave") / "test.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE bars (symbol TEXT NOT NULL, timestamp INTEGER NOT NULL, "
+        "open REAL, high REAL, low REAL, close REAL, volume REAL, "
+        "PRIMARY KEY (symbol, timestamp))"
+    )
+    n = 120
+    t0 = int(datetime(2024, 1, 2, tzinfo=timezone.utc).timestamp())
+    def pp(i): return 100.0 + 0.15 * i + 6.0 * np.sin(2 * np.pi * i / 40.0)
+    rows = []
+    for i in range(n):
+        c = pp(i); o = c + (0.1 if i % 2 else -0.1)
+        h = max(o, c) + 0.2; l = min(o, c) - 0.2
+        rows.append(("AAPL", t0 + i * 60, o, h, l, c, 1_000_000.0))
+    conn.executemany("INSERT INTO bars VALUES (?,?,?,?,?,?,?)", rows)
+    conn.commit(); conn.close()
+    return str(db)
+
+
+def test_engine_deps_factor_injected(db_path):
+    """deps=['sma'] → engine precomputes and injects sma output as param."""
+    from algot import sma as sma_factor
+    captured = {}
+
+    @plugin(
+        category="signal",
+        shape_in={"close": "Sequence[float64]"},
+        shape_out="Signal | None",
+        stateful=True,
+        state_type={},
+        min_bars=20,
+        deps=["sma"],
+    )
+    def sig_uses_dep_sma(close, sma, state):
+        # sma param = injected full-series sma(close, n=20) sliced to current bar
+        captured["sma_val"] = float(sma[0])
+        captured["close_last"] = float(close[0])
+        return None
+
+    strat = Strategy(id="s", type=StrategyType.LONG, capital=100000.0,
+                     symbols=["AAPL"], signals=["sig_uses_dep_sma"])
+    engine = BacktestEngine(strat, SqliteSource(db_path), "AAPL", (1, "min"))
+    result = engine.run()
+
+    # sma output exists in results? verify engine ran without TypeError
+    assert result["dropped_warmup"] == 0  # min_bars=20, but signal returns None
+    # compare injected value vs direct sma call on last 20 close values
+    close_full = result["bars"].close.data
+    direct = float(np.mean(close_full[-20:]))
+    assert captured["sma_val"] == pytest.approx(direct), \
+        "injected sma value != direct sma(close,20) at last bar"
+    assert captured["close_last"] == pytest.approx(close_full[-1])
+
+
+def test_engine_bars_view_ohlcv_factor(db_path):
+    """bars view injected → OHLCV factors (atr) reachable inside signal."""
+    from algot import atr as atr_factor
+    captured = {}
+
+    @plugin(
+        category="signal",
+        shape_in={"bars": "OHLCVSequence"},
+        shape_out="Signal | None",
+        stateful=True,
+        state_type={},
+        min_bars=14,
+    )
+    def sig_uses_bars(bars, state):
+        a = atr_factor(bars, n=14)
+        captured["atr_val"] = float(a[0])
+        captured["n_bars"] = len(bars)
+        return None
+
+    strat = Strategy(id="s", type=StrategyType.LONG, capital=100000.0,
+                     symbols=["AAPL"], signals=["sig_uses_bars"])
+    engine = BacktestEngine(strat, SqliteSource(db_path), "AAPL", (1, "min"))
+    result = engine.run()
+
+    # atr callable on bars view → captured a real value at the end (non-NaN)
+    assert captured["n_bars"] == 120
+    assert not np.isnan(captured["atr_val"])
+    # atr(14) first valid at bar 14 → value plausible > 0
+    assert captured["atr_val"] > 0
+
+
+def test_engine_deps_ohlcv_factor(db_path):
+    """deps=['atr'] → shape_in OHLCVSequence binds bars automatically."""
+    from algot import atr as atr_factor
+    captured = {}
+
+    @plugin(
+        category="signal",
+        shape_in={"close": "Sequence[float64]"},
+        shape_out="Signal | None",
+        stateful=True,
+        state_type={},
+        min_bars=14,
+        deps=["atr"],
+    )
+    def sig_uses_dep_atr(close, atr, state):
+        captured["atr_val"] = float(atr[0])
+        return None
+
+    strat = Strategy(id="s", type=StrategyType.LONG, capital=100000.0,
+                     symbols=["AAPL"], signals=["sig_uses_dep_atr"])
+    engine = BacktestEngine(strat, SqliteSource(db_path), "AAPL", (1, "min"))
+    result = engine.run()
+    assert not np.isnan(captured["atr_val"])
+    assert captured["atr_val"] > 0
