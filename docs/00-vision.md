@@ -67,14 +67,19 @@
 
 **Sequence 数据结构（最小字段，所有算法 I/O 走这个）**：
 
-```
-Sequence(data=..., meta={symbol, timeframe, unit, dtype}, index=...)
+```python
+@dataclass
+class Sequence:
+    data: np.ndarray             # 1D, v1 默认 np.float64
+    meta: dict                   # {symbol, timeframe, unit, dtype}
+    index: np.ndarray | pd.DatetimeIndex  # 时间戳 / bar 序号
 ```
 
-- `data`：一维数值（numpy array 或 pandas Series）
-- `meta`：symbol / timeframe / unit / dtype 元信息
-- `index`：时间戳 / bar 序号
+- `data`：1D numpy array（v1 默认 `np.float64`；plugin 严苛契约可另行声明）
+- `meta`：symbol / timeframe / unit / dtype 元信息；`meta["dtype"]` = `data.dtype` 派生（自动同步，不需手填）
+- `index`：时间戳 / bar 序号（v1 用 `pd.DatetimeIndex` 或 `np.ndarray[int64]`）
 - v1 一律 1D（单 symbol）；2D 留给多 symbol v2 扩展
+- **Plugin dtype 严苛契约**：可在 `shape_in={"x": "Sequence[float64]"}` 声明（详见 §6.5）
 
 所有 Sequence 必须支持 §3.2 索引语法（`seq[N]` / `seq[A, B]`）。
 
@@ -160,6 +165,20 @@ def sma(close, period=20):
 - ✅ 暖机期信号静默忽略
 - ✅ 不强制最小数据长度
 - ➕ INFO 日志增加透明度（TradingView 无）
+
+**适用范围**：v1 适用 `factor` + `signal` 两类 plugin（这是 v1 落地的两类）。其他类别（`source` / `sizer` / `risk` / `scheduler`）v1.x 实现时按需复用。
+
+**隐式吞 Signal 机制**（plugin 不知情、framework 静默 drop）：
+
+1. **Plugin 每 bar 被调**（含 warmup 期），state 持续更新（跟 G3 一致）
+2. **Plugin 返回 Signal**（不需判断 `bar_idx`）
+3. **Framework consume 阶段检查**：若 `bar_idx < plugin.min_bars` → **drop Signal 静默**
+4. **Backtest 结束时 INFO 累计**：`[INFO] wyckoff_signal: 跳过 19 bar 暖机期信号`
+
+**关键点**：
+- Plugin 代码不需要写 `if bar_idx < N: return None`
+- Plugin 不需要知道 `min_bars`（这是 metadata，仅 framework 用）
+- state 仍更新（plugin 内部 state 在 warmup 期可收敛）
 
 ### 3.5 Plugin state / lifecycle 协议（G3）
 
