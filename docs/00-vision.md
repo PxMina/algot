@@ -1,6 +1,6 @@
 # algot — 项目愿景与核心规范
 
-> 状态：草案 v0.2（2026-08-31）
+> 状态：草案 v0.3（2026-09-02）
 > 后续文档：`01-architecture.md` / `02-data-layer.md` / `03-algorithms.md` / `04-multi-timeframe.md` / ...
 
 ---
@@ -154,12 +154,14 @@ algot/
 
 3. **实时 vs 历史**：只做历史回测，还是也要支持实时增量 bar 流入？
 
-4. ✅ **算法组合语法**：**[已定]** — 三种全做，分阶段落地（2026-09-02）
-   - **v1**：表达式 DSL（`sma(close, 20) - ema(close, 50)`）为主
-   - **v1**：用户 Python 函数注册（`@algot.factor` 装饰器 / `register()`）为逃逸通道，可被 DSL 引用
-   - **v2+**：图式串联（DAG），节点可引用 DSL 表达式与注册函数
+4. ✅ **算法组合 / 插件架构**：**[已定]** — 一切皆插件，统一 I/O，分阶段组合（2026-09-02）
+   - **核心原则**：指标 / Wyckoff / 数据源 / 信号生成 / 仓位 / 风控 / 调度 都按插件实现；框架不关心实现（Python / numba / 外部进程），只认 I/O 约定
+   - **v1**：函数调用为主（`sma(close, 20)` 即调 sma 插件）
+   - **v1**：用户用 `@algot.plugin(category=..., pure=True, ...)` 注册新插件，可被 DSL 引用
+   - **v2+**：图式串联（DAG），节点 = 插件调用，边 = 数据流；DSL 字符串 = DAG 序列化形式（仅内部）
 
-5. **信号抽象接口形态**（v1 必须先定，否则 §1.2 约束落地不了）：
+5. **统一 I/O 约定 / Signal 接口**（v1 必须先定，否则 §1.2 + 插件架构落地不了）：
+   - **统一 I/O 约定**：所有插件的输入输出遵循固定 shape 协议
    - Signal 数据结构（symbol / time / direction / price / size / 有效期 / ...）
    - 时序约定（信号相对于 bar 触发点）
    - 分发机制（同步回调 / 事件总线）
@@ -167,6 +169,12 @@ algot/
 
 6. **负数索引**：支持 Python 风格 `seq[-1]` 还是禁止？
 
+7. **插件分类 + 元数据契约**：
+   - 插件类别（决定 I/O 约定形态）：factor（series→series）/ signal（data→Signal）/ source（query→bars）/ sizer（returns→fraction）/ risk（positions→Signal）/ scheduler（time→bar）/ 其他？
+   - 插件元数据：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, deps=[...], version=...)`
+   - 数据类型基线：numpy / pandas / 自定义 Tensor？
+   - 错误传播：插件 throw vs 返回 NaN？
+   - shape 兼容：(a) 单 symbol 1D / (b) 多 symbol 2D 下插件声明接受哪种
 ---
 
 ## 7. 文档索引
