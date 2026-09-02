@@ -675,7 +675,7 @@ algot run --reset examples/golden_cross.yaml
 
 ## 13. 跟踪与里程碑
 
-- [ ] **M1**: 骨架 + Sequence + SqliteSource
+- [x] **M1**: 骨架 + Sequence + SqliteSource (commit ca40fb2, tag M1, 2026-09-02)
 - [ ] **M2**: Plugin 框架 + sma
 - [ ] **M3**: 13 built-in factors
 - [ ] **M4**: Signal + BacktestBroker + engine
