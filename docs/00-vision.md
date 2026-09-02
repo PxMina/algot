@@ -192,7 +192,7 @@ algot/
 | 时间步定义 | bar index 而非秒数 | 多 timeframe 友好 |
 | 切片闭合 | 闭区间 `[A, B]` 含两端 | 与用户给出的示例一致 |
 | 跨 TF 语法 | `resample()` 聚合函数 | 跟"算法即函数"哲学一致，零新语法 |
-| live 模式 | run-level 全局 + per-call override | 默认安全 + 灵活 escape hatch（不要 per-TF/per-symbol，YAGNI） |
+| live 模式 | per-call > live_by_tf > run-level > closed 兜底 | 详见 04 §3.1；4 级优先级，默认安全 |
 | 多 TF 详细规范 | 见 `04-multi-timeframe.md` | 单独成 spec |
 
 ---
@@ -227,8 +227,20 @@ algot/
      - `scheduler`（time → bar）— session_calendar
    - **v1 落地范围**：仅 `factor` + `signal` 两类够用；其余 4 类留 v1.x
    - **Plugin 元数据**：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, min_bars=N, deps=[...], version=...)`（详见 §3.4 暖机协议）
-   - **Signal 数据结构**：symbol / time / direction / price / size / 有效期 / ...
-   - **时序约定**：信号相对于 bar 触发点
+   - **Signal 数据结构（字段定义）**：
+     ```python
+     @dataclass
+     class Signal:
+         symbol: str              # 标的 ticker（如 'AAPL' / 'BTC/USDT'）
+         time: int                # 触发 bar 序号（与 Sequence.index 对齐）
+         direction: Direction     # enum: OPEN_LONG / OPEN_SHORT / CLOSE_LONG / CLOSE_SHORT
+         price: float | None      # None=市价；数值=限价
+         size: float              # 仓位单位数（shares/contracts；单位由 source data 决定）
+         expiry: int | None = 0   # 0=仅当根 bar（默认）；N=N bar 后过期；None=永久
+         tag: str | None = None   # 可选标签（backtest 分类 / 调试）
+         id: str | None = None    # 框架自动注入 UUID（追踪 / cancel）
+     ```
+   - **时序约定**：`Signal.time` = 触发 bar 序号（与 Sequence.index 对齐）；emit 时刻 = bar `time` close；消费时刻 = bar `time + 1` open（取决于 G2 执行模型，待定）
    - **分发机制**：同步回调 / 事件总线
    - **回测 / 实盘挂接点对称 API**
    - **数据类型基线**：numpy / pandas / 自定义 Tensor？
