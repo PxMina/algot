@@ -427,10 +427,11 @@ algot/
    - **错误处理**：默认 **throw**（plugin raise 即 framework raise）；data 层 NaN passthrough **不掩盖数据问题**（遵循 Lesson 22：warning + 业务不阻断）
    - **API 演进**：v1.x 仅 additive（新 plugin 类别 / 新 metadata 字段可加）；v2.0 才允许 breaking（移除字段、改 metadata key）
    - **Signal 数据结构**：详见 `05-signals.md §7`（canonical 定义，本节为概要）。关键字段：
+     - `symbol`: ticker str（broker 撮合需要；06 §6.1 引用 signal.symbol）
      - `direction`: Direction enum（**5 状态 v1 全实现**：LONG / SHORT / FLAT / CLOSE_LONG / CLOSE_SHORT）
      - `price`: MarketOrder | LimitOrder | LimitRange（v1 paper 主 MarketOrder）
      - `size`: FixedSize | PctSize | RiskSize（三类 v1 全支持）
-     - `bar_time`: 当前 bar START time（02 §5.1 UTC）
+     - `bar_time`: 当前 bar START time（UTC datetime，取自 Sequence.index[-1]；02 §5.1）
      - `validity`: `1`=当前 bar / `N`=N bars / `-1`=永久
      - `signal_id`: UUID auto
      - `tags`: dict metadata

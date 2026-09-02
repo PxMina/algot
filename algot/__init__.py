@@ -26,6 +26,7 @@ from algot.signal import (
     Direction,
     FixedSize,
     LimitOrder,
+    LimitRange,
     MarketOrder,
     PctSize,
     Price,

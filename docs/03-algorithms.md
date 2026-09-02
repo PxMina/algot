@@ -123,6 +123,7 @@ def crossover_above(close: Sequence, threshold: float = 100.0, state: dict | Non
     if crossed:
         # 完整 Signal API 见 05 §7；导入：from algot import Direction, MarketOrder, FixedSize
         return Signal(
+            symbol=close.meta["symbol"],
             direction=Direction.LONG,
             price=MarketOrder(),
             size=FixedSize(shares=100),

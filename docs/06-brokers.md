@@ -220,6 +220,7 @@ def apply_flat(strategy_id, broker_state, fill_price_lookup, bar_time):
         # 等效 CLOSE_*(slot.shares)
         if slot.direction == StrategyType.LONG:
             close_signal = Signal(
+                symbol=slot.symbol,
                 direction=Direction.CLOSE_LONG,
                 price=MarketOrder(),
                 size=FixedSize(shares=slot.shares),
@@ -228,6 +229,7 @@ def apply_flat(strategy_id, broker_state, fill_price_lookup, bar_time):
             apply_close(slot, broker_state.pools[strategy_id], close_signal, fill_price_lookup(slot.symbol, bar_time), Direction.CLOSE_LONG)
         elif slot.direction == StrategyType.SHORT:
             close_signal = Signal(
+                symbol=slot.symbol,
                 direction=Direction.CLOSE_SHORT,
                 price=MarketOrder(),
                 size=FixedSize(shares=slot.shares),

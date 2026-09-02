@@ -95,6 +95,7 @@ class LimitRange:
 
 ```python
 Signal(
+    symbol="AAPL",
     direction=LONG,
     price=MarketOrder(),
     size=FixedSize(shares=100),
@@ -172,14 +173,14 @@ RiskSize(risk_amount=100, stop_loss=95)
 ### 4.4 Size 对 FLAT 的约束
 
 ```python
-Signal(direction=FLAT, price=MarketOrder(), size=FixedSize(shares=0), bar_time=...)
+Signal(symbol="AAPL", direction=FLAT, price=MarketOrder(), size=FixedSize(shares=0), bar_time=...)
 # size 字段 FLAT 不使用，固定传 FixedSize(shares=0) 占位
 ```
 
 **或** framework 提供 helper：
 ```python
-flat_signal = Signal.flat(bar_time=current_bar_time)
-# → Signal(direction=FLAT, price=MarketOrder(), size=FixedSize(shares=0), ...)
+flat_signal = Signal.flat(symbol="AAPL", bar_time=current_bar_time)
+# → Signal(symbol="AAPL", direction=FLAT, price=MarketOrder(), size=FixedSize(shares=0), ...)
 ```
 
 ---
@@ -202,7 +203,6 @@ class Signal:
 **Broker 视角**：validity 决定 order 的 expire_after。
 
 **v1 paper broker**：validity=1 简单（next bar 即撮合）。validity=N / -1 在 v1 partial 实现（broker 内部记 expiry bar）。
-
 ---
 
 ## 6. signal_id / tags
@@ -224,6 +224,7 @@ class Signal:
 
 ```python
 Signal(
+    symbol="AAPL",
     direction=LONG,
     price=MarketOrder(),
     size=FixedSize(shares=100),
@@ -239,62 +240,62 @@ Signal(
 ```python
 @dataclass
 class Signal:
-    direction: Direction
-    price: MarketOrder | LimitOrder | LimitRange
-    size: FixedSize | PctSize | RiskSize
-    bar_time: datetime
-    validity: int = 1
+    symbol: str                    # ticker（broker 撮合需要，06 §6.1 引用 signal.symbol）
+    direction: Direction           # 5-state
+    price: MarketOrder | LimitOrder | LimitRange = MarketOrder()
+    size: FixedSize | PctSize | RiskSize = FixedSize(0)
+    bar_time: datetime             # trigger bar START（UTC datetime；取 Sequence.index[-1]）
+    validity: int = 1              # 1=当前 bar; N=N bar; -1=永久
     signal_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     tags: dict = field(default_factory=dict)
-    
+
     def __post_init__(self):
         self._validate()
-    
+
     def _validate(self):
+        # symbol
+        if not isinstance(self.symbol, str) or not self.symbol:
+            raise ValueError(f"symbol must be non-empty str, got {self.symbol!r}")
+
         # direction
         if not isinstance(self.direction, Direction):
             raise ValueError(f"direction must be Direction enum, got {type(self.direction)}")
-        
+
         # price
-        if isinstance(self.price, LimitOrder):
-            if self.price.price <= 0:
-                raise ValueError(f"LimitOrder.price must be > 0, got {self.price.price}")
-        elif isinstance(self.price, LimitRange):
-            if self.price.min_price >= self.price.max_price:
-                raise ValueError(f"LimitRange: min_price ({self.price.min_price}) must be < max_price ({self.price.max_price})")
-        
+        if not isinstance(self.price, (MarketOrder, LimitOrder, LimitRange)):
+            raise ValueError(f"price must be MarketOrder | LimitOrder | LimitRange, got {type(self.price).__name__}")
+        if isinstance(self.price, LimitOrder) and self.price.price <= 0:
+            raise ValueError(f"LimitOrder.price must be > 0, got {self.price.price}")
+        if isinstance(self.price, LimitRange) and self.price.min_price >= self.price.max_price:
+            raise ValueError(f"LimitRange: min_price ({self.price.min_price}) must be < max_price ({self.price.max_price})")
+
         # size
-        if isinstance(self.size, FixedSize):
-            if self.size.shares <= 0:
-                raise ValueError(f"FixedSize.shares must be > 0, got {self.size.shares}")
-        elif isinstance(self.size, PctSize):
-            if not (0 < self.size.pct <= 1):
-                raise ValueError(f"PctSize.pct must be in (0, 1], got {self.size.pct}")
-            if self.direction == Direction.FLAT:
+        if not isinstance(self.size, (FixedSize, PctSize, RiskSize)):
+            raise ValueError(f"size must be FixedSize | PctSize | RiskSize, got {type(self.size).__name__}")
+        if isinstance(self.size, PctSize) and not (0 < self.size.pct <= 1):
+            raise ValueError(f"PctSize.pct must be in (0, 1], got {self.size.pct}")
+        if self.direction == Direction.FLAT:
+            if isinstance(self.size, PctSize):
                 raise ValueError("PctSize cannot be used with FLAT (use FixedSize(0) or Signal.flat() helper)")
-        elif isinstance(self.size, RiskSize):
-            if self.size.risk_amount <= 0:
-                raise ValueError(f"RiskSize.risk_amount must be > 0, got {self.size.risk_amount}")
-            if self.size.stop_loss <= 0:
-                raise ValueError(f"RiskSize.stop_loss must be > 0, got {self.size.stop_loss}")
-            if self.direction in (Direction.LONG,) and self.size.stop_loss >= ...:  # placeholder
-                raise ValueError("RiskSize.stop_loss must be < entry price for LONG")
-            # 类似 SHORT: stop_loss > entry
-        elif isinstance(self.size, FixedSize) and self.size.shares == 0 and self.direction != Direction.FLAT:
-            raise ValueError("FixedSize(shares=0) only valid with FLAT")
-        
+            if isinstance(self.size, FixedSize) and self.size.shares != 0:
+                raise ValueError("FLAT size must be FixedSize(0); position implied by broker state")
+        # RiskSize stop_loss vs entry 比较在 broker 撮合时做（entry 价格那时才知道）
+
         # validity
         if self.validity == 0:
             raise ValueError("validity cannot be 0; use 1 for current bar, -1 for permanent")
-    
+        if self.validity < -1:
+            raise ValueError(f"validity must be >= -1, got {self.validity}")
+
     @classmethod
-    def flat(cls, bar_time: datetime, **kwargs) -> "Signal":
-        """Helper for FLAT signal (size 占位)."""
+    def flat(cls, symbol: str, bar_time: datetime | None = None, **kwargs) -> "Signal":
+        """Helper for FLAT signal (size 占位 FixedSize(0))."""
         return cls(
+            symbol=symbol,
             direction=Direction.FLAT,
             price=MarketOrder(),
             size=FixedSize(shares=0),
-            bar_time=bar_time,
+            bar_time=bar_time or datetime.now(timezone.utc),
             **kwargs,
         )
 ```
@@ -476,6 +477,7 @@ class Order:
 ```python
 # 1. 简单 LONG
 Signal(
+    symbol="AAPL",
     direction=Direction.LONG,
     price=MarketOrder(),
     size=FixedSize(shares=100),
@@ -485,6 +487,7 @@ Signal(
 
 # 2. 限价 LONG
 Signal(
+    symbol="AAPL",
     direction=Direction.LONG,
     price=LimitOrder(price=105.50),
     size=FixedSize(shares=100),
@@ -493,6 +496,7 @@ Signal(
 
 # 3. 风险驱动 sizing
 Signal(
+    symbol="AAPL",
     direction=Direction.LONG,
     price=MarketOrder(),
     size=RiskSize(risk_amount=200, stop_loss=95.0),  # entry=100, risk=5/share → 40 shares
@@ -500,10 +504,11 @@ Signal(
 )
 
 # 4. 一键全平
-Signal.flat(bar_time=current_bar_start, tags={"reason": "stop_loss_triggered"})
+Signal.flat(symbol="AAPL", bar_time=current_bar_start, tags={"reason": "stop_loss_triggered"})
 
 # 5. 平多仓
 Signal(
+    symbol="AAPL",
     direction=Direction.CLOSE_LONG,
     price=MarketOrder(),
     size=FixedSize(shares=50),  # 只平 50 股（剩余保留）
