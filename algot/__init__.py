@@ -53,6 +53,8 @@ __all__ = [
     "FixedSize", "PctSize", "RiskSize", "Size",
     # plugin framework
     "plugin", "_REGISTRY",
+    # config + cli
+    "parse_strategy_yaml", "StrategyConfig", "ConfigError",
     # built-in factors
     "sma", "ema", "rsi", "atr", "adx", "stddev", "vwap",
     "donchian_high", "donchian_low",
@@ -78,6 +80,9 @@ from algot.algo.builtins.factor import (
     donchian_high, donchian_low,
     crossover, crossunder, resample, shift,
 )
+
+# config (yaml-driven strategies; used by algot.cli)
+from algot.config import ConfigError, StrategyConfig, parse_strategy_yaml
 
 # broker + engine (import after signal/sequence deps)
 from algot.broker import BacktestBroker, CashPool, Order, PositionSlot, StrategyType

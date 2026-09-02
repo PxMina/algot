@@ -22,16 +22,15 @@
 
 ## 2. Milestones（按依赖顺序）
 
-| M | 名称 | 依赖 | 验证 | 估时 |
-|---|---|---|---|---|
-| **M1** | 骨架 + Sequence + SqliteSource | — | pytest + load AAPL | 半天 |
-| **M2** | Plugin 框架 + sma | M1 | pytest + 注册 sma 跑通 | 半天 |
-| **M3** | 13 built-in factors | M2 | pytest + smoke | 1-2 天 |
-| **M4** | Signal + BacktestBroker + engine | M3 | pytest + golden_cross 完整回测 | 2-3 天 |
-| **M5** | CLI backtest + strategy.yaml | M4 | `algot backtest` 跑通 | 1 天 |
-| **M6** | PaperBroker + live state 持久化 | M5 | `algot run` + restart 恢复 | 1 天 |
-| **M7** | Examples + README + 收尾 | M6 | clone → install → 跑通 | 1 天 |
-| **总计** | | | | **~7-9 天**（单人全力）|
+| M | 名称 | 依赖 | 验证 | 估时 | 状态 |
+|---|---|---|---|---|---|
+| **M1** | 骨架 + Sequence + SqliteSource | — | pytest + load AAPL | 半天 | ✅ tag `M1` |
+| **M2** | Plugin 框架 + 13 factors + Signal | M1 | pytest + 注册 sma 跑通 | 1 天 | ✅ tag `M2` |
+| **M3** | BacktestBroker + BacktestEngine | M2 | pytest + golden_cross 端到端 | 2-3 天 | ✅ tag `M3` (+review 修复) |
+| **M4** | CLI backtest + strategy.yaml | M3 | `algot backtest` 跑通 | 1 天 | ✅ tag `M4` |
+| **M5** | PaperBroker + live state 持久化 | M4 | `algot run` + restart 恢复 | 1 天 | ⬜ |
+| **M6** | Examples + README + 收尾 | M5 | clone → install → 跑通 | 1 天 | ⬜ |
+| **总计** | | | | **~7-9 天**（单人全力）| |
 
 每个 milestone commit + tag（`M1`, `M2`, ...）。M7 后打 `v1.0.0` tag + release。
 
