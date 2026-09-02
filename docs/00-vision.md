@@ -353,6 +353,7 @@ algot/
 | Signal 执行时机 | bar `time + exec_lag` open，exec_lag ≥ 1（默认 1） | 禁 lookahead；标准 backtest 约定 |
 | Stateful plugin | `@algot.plugin(stateful=True, state={...})` schema-driven dataclass | 对齐 TradingView `var`；属性访问（`state.phase = ...`、`state.bars += 1`） |
 | Data quality | gap=NaN+INFO log; staleness=per-TF 阈值+WARN+drop signal | 对齐 TV NaN 兜底；live 增量 staleness 检查 |
+| 多 symbol | v1 = 单 symbol; multi-symbol = v2 | YAGNI; host 层 `for sym in universe` 循环 |
 | 多 TF 详细规范 | 见 `04-multi-timeframe.md` | 单独成 spec |
 
 ---
@@ -367,7 +368,11 @@ algot/
    - OHLCV 标准聚合 / 整点对齐 / 升采样 only
    - live 语义：per-call > live_by_tf > run-level > closed 兜底（详见 04 §3.1）
 
-2. **多 symbol 支持**：单次回测是单标的还是要支持股票组合？
+2. ✅ **多 symbol 支持**：**[已定 v1 单 symbol]**（2026-09-02）
+   - v1 一律单 symbol；multi-symbol 是 v2 主题
+   - Sequence 保持 1D（v1 不变）
+   - host 层 `for sym in universe: ...` 循环跑多标的
+   - 3 个子决策（calendar 对齐 / portfolio cash / 2D Sequence）留 v2
 
 3. **实时 vs 历史**：只做历史回测，还是也要支持实时增量 bar 流入？
 
