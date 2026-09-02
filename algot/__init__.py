@@ -17,8 +17,14 @@ Public API (v1):
 
     Signals (from algot.signal):
         Signal, Direction
-        Price: MarketOrder, LimitOrder
+        Price: MarketOrder, LimitOrder, LimitRange
         Size: FixedSize, PctSize, RiskSize
+
+    Broker (from algot.broker):
+        BacktestBroker, PositionSlot, CashPool, Order, StrategyType
+
+    Engine (from algot.engine):
+        Strategy, BacktestEngine
 """
 
 from algot.sequence import OHLCVSequence, Sequence
@@ -43,14 +49,17 @@ __all__ = [
     "BaseSource", "SqliteSource",
     # signals
     "Signal", "Direction",
-    "MarketOrder", "LimitOrder", "Price",
+    "MarketOrder", "LimitOrder", "LimitRange", "Price",
     "FixedSize", "PctSize", "RiskSize", "Size",
     # plugin framework
     "plugin", "_REGISTRY",
-    # built-in factors (lazy import to avoid circular)
+    # built-in factors
     "sma", "ema", "rsi", "atr", "adx", "stddev", "vwap",
     "donchian_high", "donchian_low",
     "crossover", "crossunder", "resample", "shift",
+    # broker + engine
+    "BacktestBroker", "PositionSlot", "CashPool", "Order", "StrategyType",
+    "Strategy", "BacktestEngine",
     "__version__",
 ]
 
@@ -69,3 +78,7 @@ from algot.algo.builtins.factor import (
     donchian_high, donchian_low,
     crossover, crossunder, resample, shift,
 )
+
+# broker + engine (import after signal/sequence deps)
+from algot.broker import BacktestBroker, CashPool, Order, PositionSlot, StrategyType
+from algot.engine import BacktestEngine, Strategy

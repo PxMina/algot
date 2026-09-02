@@ -50,6 +50,7 @@ ALLOWED_DTYPES = {
     "OHLCVSequence",
     "ndarray",
     "Signal",
+    "Signal | None",        # signal plugin output contract (03 §3.3)
     "None",
 }
 
