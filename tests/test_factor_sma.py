@@ -388,3 +388,39 @@ def test_shift_lags_by_n():
     assert result.data[1] == pytest.approx(1.0)
     # result[9] = NaN → result.data[0] = NaN
     assert np.isnan(result.data[0])
+
+# ---------- n parameterization (M3: engine needs sma fast/slow) ----------
+
+def test_sma_custom_period():
+    """sma(x, n=5) uses 5-bar window (per 03 §11 signature)."""
+    seq = _make_seq(list(range(1, 31)))  # 1..30
+    r5 = algot.sma(seq, n=5)
+    r20 = algot.sma(seq)  # default 20
+    # r5 first valid at data index 4 = mean(1..5) = 3.0
+    assert r5.data[4] == pytest.approx(3.0)
+    # r20 first valid at data index 19 = mean(1..20) = 10.5
+    assert r20.data[19] == pytest.approx(10.5)
+    # both same length
+    assert len(r5) == len(r20) == 30
+
+
+def test_ema_custom_period():
+    """ema(x, n=5) alpha = 2/(5+1)."""
+    seq = _make_seq(list(range(1, 21)))
+    r = algot.ema(seq, n=5)
+    alpha = 2.0 / 6.0
+    # seed at data index 4 = mean(1..5) = 3.0
+    assert r.data[4] == pytest.approx(3.0)
+    # data[5] = alpha*6 + (1-alpha)*3.0
+    expected = alpha * 6.0 + (1 - alpha) * 3.0
+    assert r.data[5] == pytest.approx(expected)
+
+
+def test_factor_n_param_direct_plugin_call():
+    """PluginCall.__call__ binds n kwarg."""
+    pc = get_plugin("stddev")
+    seq = _make_seq(list(range(1, 21)))
+    r = pc(seq, n=5)  # stddev over 5-window
+    # data[4] = population std of 1..5 = sqrt(2)
+    import math
+    assert r.data[4] == pytest.approx(math.sqrt(2.0))

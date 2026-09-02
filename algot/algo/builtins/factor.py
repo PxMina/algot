@@ -81,33 +81,26 @@ def _na_seq(n: int, like: Sequence) -> Sequence:
     pure=True,
     min_bars=0,
 )
-def sma(x):
+def sma(x, n=20):
     """Simple moving average over a rolling window (per 03 §11).
-
-    Per 03 §11 default: period = 20.
-    v1: period is a module-level constant. v1.x: per-call override.
 
     Args:
         x: input Sequence[float64]
+        n: rolling window period (default 20)
 
     Returns:
         Sequence[float64] of same length.
-        seq[N] = mean of last `period` bars ending at seq[N]
-        (inclusive of current bar). seq[N] = NaN for N < period - 1.
-
-    Implementation: for result.data[j] (chronological index j),
-    window = data[j-period+1 : j+1], so result.data[j] = mean of
-    those values. For j < period-1, no full window → NaN.
+        seq[N] = NaN for N < n-1 (window not full yet);
+        seq[N] = mean of last `n` bars ending at seq[N] otherwise.
     """
-    period = 20
     seq = _ensure_seq(x)
-    n = len(seq)
-    if n < period:
-        return _na_seq(n, seq)
+    length = len(seq)
+    if length < n:
+        return _na_seq(length, seq)
 
-    result = np.full(n, np.nan, dtype=np.float64)
-    for j in range(period - 1, n):
-        window = seq.data[j - period + 1 : j + 1]
+    result = np.full(length, np.nan, dtype=np.float64)
+    for j in range(n - 1, length):
+        window = seq.data[j - n + 1 : j + 1]
         result.data[j] = float(np.mean(window))
     return Sequence(data=result, meta=dict(seq.meta), index=seq.index)
 
@@ -121,30 +114,29 @@ def sma(x):
     pure=True,
     min_bars=0,
 )
-def ema(x):
+def ema(x, n=20):
     """Exponential moving average (per 03 §11).
 
-    Default period = 20. Uses SMA seeding at bar period-1.
+    Args:
+        x: input Sequence[float64]
+        n: smoothing period (default 20); alpha = 2/(n+1)
 
     Returns:
-        Sequence[float64]. seq[N] = NaN for N < period - 1.
+        Sequence[float64]. NaN for first n-1 bars (SMA seed at j=n-1).
     """
-    period = 20
     seq = _ensure_seq(x)
-    n = len(seq)
-    if n < period:
-        return _na_seq(n, seq)
+    length = len(seq)
+    if length < n:
+        return _na_seq(length, seq)
 
-    alpha = 2.0 / (period + 1)
-    result = np.full(n, np.nan, dtype=np.float64)
+    alpha = 2.0 / (n + 1)
+    result = np.full(length, np.nan, dtype=np.float64)
 
-    # Seed with SMA at first valid chronological position (j = period-1)
-    # result.data[j] = SMA over data[0:period]
-    result.data[period - 1] = float(np.mean(seq.data[:period]))
+    # Seed with SMA at first valid chronological position (j = n-1)
+    result.data[n - 1] = float(np.mean(seq.data[:n]))
 
     # EMA updates: result.data[j] = α·data[j] + (1-α)·result.data[j-1]
-    # (uses raw data[j] = current bar at chronological position j)
-    for j in range(period, n):
+    for j in range(n, length):
         result.data[j] = alpha * seq.data[j] + (1 - alpha) * result.data[j - 1]
 
     return Sequence(data=result, meta=dict(seq.meta), index=seq.index)
@@ -159,45 +151,42 @@ def ema(x):
     pure=True,
     min_bars=14,
 )
-def rsi(x):
+def rsi(x, n=14):
     """Relative Strength Index (per 03 §11).
 
-    Period = 14 (industry standard).
+    Args:
+        x: input Sequence[float64]
+        n: period (default 14, industry standard)
 
     Returns:
-        Sequence[float64]. Values 0-100. NaN for bars < period.
+        Sequence[float64]. Values 0-100. NaN for bars < n.
     """
-    period = 14
     seq = _ensure_seq(x)
-    n = len(seq)
-    if n < period + 1:
-        return _na_seq(n, seq)
+    length = len(seq)
+    if length < n + 1:
+        return _na_seq(length, seq)
 
-    # Compute deltas in chronological order: data[0]=oldest, data[n-1]=newest
-    # delta[t] = data[t] - data[t-1]  for t = 1..n-1
-    deltas = np.diff(seq.data)  # length n-1
+    # Compute deltas in chronological order: data[0]=oldest, data[length-1]=newest
+    deltas = np.diff(seq.data)  # length-1
     gains = np.where(deltas > 0, deltas, 0.0)
     losses = np.where(deltas < 0, -deltas, 0.0)
 
-    # Work on raw np.ndarray, then wrap at end (faster, avoids __setitem__ overhead)
-    raw = np.full(n, np.nan, dtype=np.float64)
+    raw = np.full(length, np.nan, dtype=np.float64)
 
-    # First RSI at chronological position period (bar 'period' steps back from current)
-    # avg_gain at this point = mean of gains[:period] (period deltas = first `period` bars of data)
-    avg_gain = float(np.mean(gains[:period]))
-    avg_loss = float(np.mean(losses[:period]))
+    # First RSI at chronological position n: avg over gains[:n]
+    avg_gain = float(np.mean(gains[:n]))
+    avg_loss = float(np.mean(losses[:n]))
 
     if avg_loss == 0:
-        raw[period] = 100.0
+        raw[n] = 100.0
     else:
         rs = avg_gain / avg_loss
-        raw[period] = 100.0 - 100.0 / (1.0 + rs)
+        raw[n] = 100.0 - 100.0 / (1.0 + rs)
 
-    # Wilder's smoothing: avg = (avg·(period-1) + new) / period
-    for i in range(period + 1, n):
-        # gains[i-1] is the gain at delta index i-1 = data[i] - data[i-1]
-        avg_gain = (avg_gain * (period - 1) + gains[i - 1]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i - 1]) / period
+    # Wilder's smoothing: avg = (avg·(n-1) + new) / n
+    for i in range(n + 1, length):
+        avg_gain = (avg_gain * (n - 1) + gains[i - 1]) / n
+        avg_loss = (avg_loss * (n - 1) + losses[i - 1]) / n
 
         if avg_loss == 0:
             raw[i] = 100.0
@@ -217,34 +206,35 @@ def rsi(x):
     pure=True,
     min_bars=14,
 )
-def atr(x):
+def atr(x, n=14):
     """Average True Range (per 03 §11).
 
-    Period = 14. Needs OHLCVSequence.
+    Args:
+        x: OHLCVSequence
+        n: period (default 14)
 
     True Range = max(high - low, |high - prev_close|, |low - prev_close|)
     """
-    period = 14
     bars = _ensure_ohlcv(x)
-    n = len(bars)
-    if n < period + 1:
-        return _na_seq(n, bars.close)
+    length = len(bars)
+    if length < n + 1:
+        return _na_seq(length, bars.close)
 
-    # Compute TR for bars[1..n-1] (i.e., data indices 1..n-1)
-    tr = np.zeros(n - 1)
-    for i in range(1, n):
+    # Compute TR for bars[1..length-1]
+    tr = np.zeros(length - 1)
+    for i in range(1, length):
         h = bars.high.data[i]
         l = bars.low.data[i]
         pc = bars.close.data[i - 1]
         tr[i - 1] = max(h - l, abs(h - pc), abs(l - pc))
 
-    # Result: NaN for first bar (no prev close), then seeded with SMA at position period
-    raw = np.full(n, np.nan, dtype=np.float64)
-    raw[period] = float(np.mean(tr[:period]))
+    # NaN until position n, seeded with SMA of tr[:n]
+    raw = np.full(length, np.nan, dtype=np.float64)
+    raw[n] = float(np.mean(tr[:n]))
 
     # Wilder's smoothing
-    for i in range(period, n - 1):
-        raw[i + 1] = (raw[i] * (period - 1) + tr[i]) / period
+    for i in range(n, length - 1):
+        raw[i + 1] = (raw[i] * (n - 1) + tr[i]) / n
 
     return Sequence(data=raw, meta=dict(bars.close.meta), index=bars.close.index)
 
@@ -258,29 +248,28 @@ def atr(x):
     pure=True,
     min_bars=14,
 )
-def adx(x):
+def adx(x, n=14):
     """Average Directional Index (per 03 §11).
 
-    Period = 14. Needs OHLCVSequence.
+    Args:
+        x: OHLCVSequence
+        n: period (default 14)
 
-    Implementation: +DM = max(high - prev_high, 0); -DM = max(prev_low - low, 0)
-    if +DM > -DM: -DM = 0 (and vice versa)
     +DI = 100 * avg(+DM) / avg(TR); -DI = 100 * avg(-DM) / avg(TR)
     DX = 100 * |+DI - -DI| / (+DI + -DI)
     ADX = Wilder's-smoothed mean of DX
     """
-    period = 14
     bars = _ensure_ohlcv(x)
-    n = len(bars)
-    if n < period * 2 + 1:
-        return _na_seq(n, bars.close)
+    length = len(bars)
+    if length < n * 2 + 1:
+        return _na_seq(length, bars.close)
 
     # Compute TR, +DM, -DM
-    tr = np.zeros(n - 1)
-    plus_dm = np.zeros(n - 1)
-    minus_dm = np.zeros(n - 1)
+    tr = np.zeros(length - 1)
+    plus_dm = np.zeros(length - 1)
+    minus_dm = np.zeros(length - 1)
 
-    for i in range(1, n):
+    for i in range(1, length):
         h = bars.high.data[i]
         l = bars.low.data[i]
         ph = bars.high.data[i - 1]
@@ -303,32 +292,32 @@ def adx(x):
             result[i + 1] = result[i] - result[i] / period + values[i]
         return result
 
-    atr_smooth = wilder(tr, period)
-    plus_dm_smooth = wilder(plus_dm, period)
-    minus_dm_smooth = wilder(minus_dm, period)
+    atr_smooth = wilder(tr, n)
+    plus_dm_smooth = wilder(plus_dm, n)
+    minus_dm_smooth = wilder(minus_dm, n)
 
     # +DI and -DI
-    plus_di = np.zeros(n - 1)
-    minus_di = np.zeros(n - 1)
-    for i in range(n - 1):
+    plus_di = np.zeros(length - 1)
+    minus_di = np.zeros(length - 1)
+    for i in range(length - 1):
         if atr_smooth[i + 1] != 0:
             plus_di[i] = 100.0 * plus_dm_smooth[i + 1] / atr_smooth[i + 1]
             minus_di[i] = 100.0 * minus_dm_smooth[i + 1] / atr_smooth[i + 1]
 
     # DX
-    dx = np.zeros(n - 1)
-    for i in range(n - 1):
+    dx = np.zeros(length - 1)
+    for i in range(length - 1):
         denom = plus_di[i] + minus_di[i]
         if denom > 0:
             dx[i] = 100.0 * abs(plus_di[i] - minus_di[i]) / denom
 
     # ADX = Wilder-smoothed mean of DX
-    raw = np.full(n, np.nan, dtype=np.float64)
-    if len(dx) >= period * 2:
-        adx_val = float(np.mean(dx[:period]))
-        raw[period * 2] = adx_val
-        for i in range(period * 2 + 1, n):
-            raw[i] = (raw[i - 1] * (period - 1) + dx[i - 1 - period]) / period
+    raw = np.full(length, np.nan, dtype=np.float64)
+    if len(dx) >= n * 2:
+        adx_val = float(np.mean(dx[:n]))
+        raw[n * 2] = adx_val
+        for i in range(n * 2 + 1, length):
+            raw[i] = (raw[i - 1] * (n - 1) + dx[i - 1 - n]) / n
 
     return Sequence(data=raw, meta=dict(bars.close.meta), index=bars.close.index)
 
@@ -342,20 +331,21 @@ def adx(x):
     pure=True,
     min_bars=0,
 )
-def stddev(x):
+def stddev(x, n=20):
     """Rolling standard deviation (per 03 §11).
 
-    Period = 20. Population stddev (ddof=0).
+    Args:
+        x: input Sequence[float64]
+        n: window period (default 20). Population stddev (ddof=0).
     """
-    period = 20
     seq = _ensure_seq(x)
-    n = len(seq)
-    if n < period:
-        return _na_seq(n, seq)
+    length = len(seq)
+    if length < n:
+        return _na_seq(length, seq)
 
-    result = np.full(n, np.nan, dtype=np.float64)
-    for j in range(period - 1, n):
-        window = seq.data[j - period + 1 : j + 1]
+    result = np.full(length, np.nan, dtype=np.float64)
+    for j in range(n - 1, length):
+        window = seq.data[j - n + 1 : j + 1]
         result.data[j] = float(np.std(window, ddof=0))
     return Sequence(data=result, meta=dict(seq.meta), index=seq.index)
 
@@ -399,17 +389,21 @@ def vwap(x):
     pure=True,
     min_bars=0,
 )
-def donchian_high(x):
-    """Rolling max over window (per 03 §11). Period = 20."""
-    period = 20
-    seq = _ensure_seq(x)
-    n = len(seq)
-    if n < period:
-        return _na_seq(n, seq)
+def donchian_high(x, n=20):
+    """Rolling max over window (per 03 §11).
 
-    result = np.full(n, np.nan, dtype=np.float64)
-    for j in range(period - 1, n):
-        window = seq.data[j - period + 1 : j + 1]
+    Args:
+        x: input Sequence[float64]
+        n: window period (default 20)
+    """
+    seq = _ensure_seq(x)
+    length = len(seq)
+    if length < n:
+        return _na_seq(length, seq)
+
+    result = np.full(length, np.nan, dtype=np.float64)
+    for j in range(n - 1, length):
+        window = seq.data[j - n + 1 : j + 1]
         result.data[j] = float(np.max(window))
     return Sequence(data=result, meta=dict(seq.meta), index=seq.index)
 
@@ -421,17 +415,21 @@ def donchian_high(x):
     pure=True,
     min_bars=0,
 )
-def donchian_low(x):
-    """Rolling min over window (per 03 §11). Period = 20."""
-    period = 20
-    seq = _ensure_seq(x)
-    n = len(seq)
-    if n < period:
-        return _na_seq(n, seq)
+def donchian_low(x, n=20):
+    """Rolling min over window (per 03 §11).
 
-    result = np.full(n, np.nan, dtype=np.float64)
-    for j in range(period - 1, n):
-        window = seq.data[j - period + 1 : j + 1]
+    Args:
+        x: input Sequence[float64]
+        n: window period (default 20)
+    """
+    seq = _ensure_seq(x)
+    length = len(seq)
+    if length < n:
+        return _na_seq(length, seq)
+
+    result = np.full(length, np.nan, dtype=np.float64)
+    for j in range(n - 1, length):
+        window = seq.data[j - n + 1 : j + 1]
         result.data[j] = float(np.min(window))
     return Sequence(data=result, meta=dict(seq.meta), index=seq.index)
 
