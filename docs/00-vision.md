@@ -444,7 +444,7 @@ algot/
 | 文件 | 内容 |
 |---|---|
 | `00-vision.md` | 本文件：愿景 + 核心规范 + 待决策清单 |
-| `01-architecture.md` | 整体架构图、模块协作、数据 / 控制流（待写）|
+| `01-architecture.md` | 整体架构图、模块协作、数据 / 控制流（**已写 v0.3**）|
 | `02-data-layer.md` | sqlite 加载、对齐、序列接口（待写）|
 | `03-algorithms.md` | 算法插件机制、注册表、内置库（待写）|
 | `04-multi-timeframe.md` | 多 TF + live 语义详细规范（**已写**）|
