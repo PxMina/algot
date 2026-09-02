@@ -235,6 +235,70 @@ def wyckoff_signal(state, close, low, high, volume):
 - `state_scope="global"` (v1 default) → 单 state 实例
 - `state_scope="per_symbol"` (v2) → state keyed by symbol
 
+### 3.6 Data quality 协议（G4）
+
+**两类问题**：gap（数据缺失）和 stale（数据过期）。Staleness 仅 live 模式相关；backtest 数据完整性由 source 决定。
+
+#### Gap（数据缺口）
+
+**v1 行为**：缺 bar → NaN + INFO log。
+
+```
+[INFO] data gap: bar_idx 100 ~ 103 (3 bars) filled with NaN
+[INFO] affected sequence: AAPL 1min, range 14:02 ~ 14:04
+```
+
+**原因**：跟 G1 warmup 一致——silent NaN 处理；plugin 自己 `isnan()` 检测，框架不替代决策。
+
+#### Staleness（数据过期，仅 live）
+
+**配置**（`strategy.yaml`）：
+
+```yaml
+staleness:
+  "1min": 90s     # 1min bar 超 90s 没新数据 → stale
+  "5min": 7min    # 5min bar 超 7min 没新数据 → stale
+  "1d": 25h       # daily bar 超 25h 没新数据 → stale
+```
+
+**TF 写法**：key 是 `(N, unit)` 的短长拼接（如 `"1min"` / `"5min"` / `"1d"` / `"1day"`），内部 normalize 到 long form（与 04 §2.1 unit alias 一致）。
+
+**框架行为**（stale 触发时）：
+
+| 行为 | 说明 |
+|---|---|
+| `[WARN] data stale: 1min last seen 14:30 (now 14:35, 5min ago)` | log |
+| **Drop signal** | emit 阶段 skip，G2 不消费 |
+| **State 仍更新** | plugin 继续跑，state 不卡 |
+| **不 halt** | v1 不引入 halt 概念 |
+
+**未配置 `staleness` 时**：默认不检查（永远信任最后 bar）。
+
+#### 框架行为汇总
+
+| 场景 | 行为 |
+|---|---|
+| **Backtest mode** | 数据源 = 加载序列；gap 由 source 决定；无 staleness 检查 |
+| **Live mode + 数据正常** | 正常调 plugin |
+| **Live mode + gap** | NaN 填充 + INFO log |
+| **Live mode + stale** | drop signal + state 仍更新 + WARN log |
+
+#### TradingView 对齐
+
+| TradingView | algot G4 |
+|---|---|
+| Gap → 图表空白 / indicator 内部 NaN | Gap → NaN + INFO log（algot 增量：可追溯） |
+| Stale → 不检测 | Stale → drop signal + WARN（algot 增量）|
+| 无 per-TF 配置 | per-TF 阈值（algot 增量）|
+
+#### 留 v2 / YAGNI
+
+- Gap interpolation（线性 / 前值 / 后值）
+- 连续 N 次 stale → 切备用数据源
+- Stale 后自动 halt / resume 协议
+- 多 symbol 某一只 stale 其它正常的隔离策略
+- 数据源健康度监控（latency / coverage 报告）
+
 ---
 
 ## 4. 模块划分（粗）
@@ -269,6 +333,7 @@ algot/
 | live 模式 | per-call > live_by_tf > run-level > closed 兜底 | 详见 04 §3.1；4 级优先级，默认安全 |
 | Signal 执行时机 | bar `time + exec_lag` open，exec_lag ≥ 1（默认 1） | 禁 lookahead；标准 backtest 约定 |
 | Stateful plugin | `@algot.plugin(stateful=True, state={...})` schema-driven dataclass | 对齐 TradingView `var`；属性访问（`state.phase = ...`、`state.bars += 1`） |
+| Data quality | gap=NaN+INFO log; staleness=per-TF 阈值+WARN+drop signal | 对齐 TV NaN 兜底；live 增量 staleness 检查 |
 | 多 TF 详细规范 | 见 `04-multi-timeframe.md` | 单独成 spec |
 
 ---
