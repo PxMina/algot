@@ -106,7 +106,7 @@ class Sequence:
 **关键约定：**
 - 切片的方向由 `A < B` 还是 `A > B` 决定，**不**额外加 reverse 标记
 - 切片**包含两端**（不是 Python 半开区间）—— `[0, 3]` = 4 个元素
-- 负数索引？**待定**（见 §6.6）
+- **v1 禁用负数索引**（`seq[-1]` / `seq[A:-B]` / `seq[-N]` 均 raise `NotImplementedError`；详见 §6.6）
 
 ### 3.3 对算法的要求
 
@@ -374,7 +374,14 @@ algot/
    - host 层 `for sym in universe: ...` 循环跑多标的
    - 3 个子决策（calendar 对齐 / portfolio cash / 2D Sequence）留 v2
 
-3. **实时 vs 历史**：只做历史回测，还是也要支持实时增量 bar 流入？
+3. ✅ **实时 vs 历史**：[已定]（2026-09-02）
+   - **v1 = backtest + live mode framework**（不含真实 broker 接入）
+   - **Live mode 提供**：
+     - partial bar 消费（详见 04 §3.1 live 语义：per-call > live_by_tf > run-level > closed）
+     - state 持久化（§3.5 G3，每 N=10 bar + signal emit 后）
+     - staleness 检测 + drop signal（§3.6 G4）
+   - **v1 paper broker**：模拟撮合 + 模拟订单，为 live mode 闭环验证用
+   - **v1 不含**：真实 broker 接入（IB / Binance / 老虎 / 富途 等），留 v2+
 
 4. ✅ **算法组合 / 插件架构**：**[已定]** — 一切皆插件，统一 I/O，分阶段组合（2026-09-02）
    - **核心原则**：指标 / Wyckoff / 数据源 / 信号生成 / 仓位 / 风控 / 调度 都按插件实现；框架不关心实现（Python / numba / 外部进程），只认 I/O 约定
@@ -392,6 +399,12 @@ algot/
      - `scheduler`（time → bar）— session_calendar
    - **v1 落地范围**：仅 `factor` + `signal` 两类够用；其余 4 类留 v1.x
    - **Plugin 元数据**：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, min_bars=N, deps=[...], version=...)`（warmup 详见 §3.4；stateful lifecycle 详见 §3.5）
+   - **Plugin dtype 基线**：v1 默认 `np.float64`；plugin 通过 `shape_in={"x": "Sequence[float64]"}` 声明严苛契约（详见 §2）
+   - **Plugin 返回类型**：
+     - `factor` → `Sequence` 或 `np.ndarray`
+     - `signal` → `Signal` 实例或 `None`
+   - **错误处理**：默认 **throw**（plugin raise 即 framework raise）；data 层 NaN passthrough **不掩盖数据问题**（遵循 Lesson 22：warning + 业务不阻断）
+   - **API 演进**：v1.x 仅 additive（新 plugin 类别 / 新 metadata 字段可加）；v2.0 才允许 breaking（移除字段、改 metadata key）
    - **Signal 数据结构（字段定义）**：
      ```python
      @dataclass
@@ -418,7 +431,12 @@ algot/
    - **shape 兼容**：(a) 单 symbol 1D / (b) 多 symbol 2D 下插件声明接受哪种
    - **API 演进策略**：v1.x 内 additive only（加字段 = 默认值）；v2.0 才允许 breaking
 
-6. **负数索引**：支持 Python 风格 `seq[-1]` 还是禁止？
+6. ✅ **负数索引**：[已定 v1 禁用，对齐 Pine Script series]（2026-09-02）
+   - **v1 禁用负数索引**：`seq[-1]` / `seq[A:-B]` / `seq[-N]` → raise `NotImplementedError`
+   - **Pine Script 对齐**：Pine series `close[-1]` 同样 runtime error（"Index can't be a negative value"）；algot `seq` 是 series-like，同语义
+   - **理由**：Pine 不支持 series 负数；algot seq 同型，不需要绕
+   - **替代写法**：`seq[0]` = 当前；`seq[N]` = N 步前
+   - **v2 评估**：可加 `array[-1]` = 末尾（Python-style，独立容器，不混 series）
 ---
 
 ## 7. 文档索引
