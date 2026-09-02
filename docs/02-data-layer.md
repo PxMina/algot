@@ -472,7 +472,7 @@ data 层只管 bar data；plugin state / position state 不在 data 层职责范
 | 00 §6.6 | 禁用负数索引（本文档 §2.2 实现） |
 | 04 §2.1 | Unit alias 表（本文档 §4 复用） |
 | 04 §2.3 | Bar boundary 固定边界（本文档 §5 一致） |
-| 03 §? | plugin 怎么 consume Sequence（详见 03-algorithms） |
+| 03 §6 | plugin 怎么 consume Sequence（详见 03-algorithms） |
 | 01 §5 | Backtest vs live 模式（本文档职责在 live 分支） |
 
 ---

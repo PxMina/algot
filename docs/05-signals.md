@@ -63,14 +63,11 @@ class Direction(str, Enum):
 
 **v1 不限制同一 ticker 的 long/short 双开**（per William 决定）。同一 ticker 出现 long + short 双仓位 = 对冲 hedge。
 
-**每个 slot 独立追踪**：
-```python
-@dataclass
-class PositionSlot:
-    shares: float = 0.0          # 当前持仓
-    avg_cost: float = 0.0         # 加权平均成本
-    realized_pnl: float = 0.0    # 已平仓 PnL（累加）
-```
+**每个 slot 独立追踪**（canonical 定义见 06 §3.1，本节概要）：
+- `shares`: 当前持仓
+- `avg_cost`: 加权平均成本
+- `realized_pnl`: 已平仓 PnL（累加）
+- + `strategy_id` / `symbol` / `direction`（broker 维护，direction 锁 LONG 或 SHORT per StrategyType）
 
 ---
 
@@ -555,7 +552,7 @@ Signal(
 | 02 §5.1 | UTC bar 时间 |
 | 03 §3.3 | Signal plugin 返回类型 |
 | 04 §2.1 | live priority（影响 Signal emit 时机）|
-| 06 §? | Signal → Order 撮合（详见 06-brokers）|
+| 06 §4 | Signal → Order 撮合（详见 06-brokers §4 cash flow + §9 Order）|
 
 ---
 
@@ -564,8 +561,8 @@ Signal(
 - **v0.3**（2026-09-02）：初版。Direction 5-state / Price union / Size union / Validity / Lifecycle / Same-bar 顺序应用 / Per-strategy 约束。
 - Q1 加权平均 cost → broker 实现（06）
 - Q2 close > current → close all + WARN（broker 实现）
-- Q3 独立资金池 per strategy → broker 实现（06 §?）
-- Q4 顺序应用 → broker 实现（06 §?）
+- Q3 独立资金池 per strategy → broker 实现（06 §3.2）
+- Q4 顺序应用 → broker 实现（06 §5.4）
 - Direction 5-state v1 全实现（William 决定）
 - OHLCV + Position slot 独立管理（William 决定）
 - Strategy model = 独立 long/short 双策略（William 决定）

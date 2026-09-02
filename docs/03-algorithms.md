@@ -689,7 +689,7 @@ def my_signal(close, sma_20):           # ← deps 自动注入参数
 | 02 §2.1 | Sequence（本文档消费） |
 | 02 §2.1.1 | OHLCVSequence（本文档 §3.3 atr/adx 等消费）|
 | 04 §2 | resample() 签名（本文档 §11.1 built-in）|
-| 05 §? | Signal 数据结构（本文档 §3.3 引用）|
+| 05 §7 | Signal 数据结构（本文档 §3.3 引用）|
 | 01 §5 | Backtest vs live 执行差异（本文档 §10.3 对齐）|
 
 ---

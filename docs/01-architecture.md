@@ -58,7 +58,7 @@ algot/
 
 | 节点 | 输入 | 输出 | 模块 | spec 引用 |
 |---|---|---|---|---|
-| **Source** | sqlite 文件 | raw bar 序列 | `data/` | 02 §? |
+| **Source** | sqlite 文件 | raw bar 序列 | `data/` | 02 §3 |
 | **Sequence** | raw bar | 1D np.ndarray + meta | `data/` | 00 §2 |
 | **factor plugin** | Sequence | Sequence | `algo/` | 00 §3.4 (warmup) |
 | **signal plugin** | Sequence(S) | Signal or None | `algo/` | 00 §3.4 + §6.5 |
@@ -206,9 +206,9 @@ exchange feed → Sequence (rolling) → plugin → Signal → broker → 订单
 
 | 想扩展 | 加在哪 | 文档 |
 |---|---|---|
-| 新指标 | `algo/` 加 plugin + `@algot.plugin` | 03 §? |
-| 新 broker | `broker/` 加 `BaseBroker` 子类 | 06 §? |
-| 新数据源 | `data/` 加 `BaseSource` 子类 | 02 §? |
+| 新指标 | `algo/` 加 plugin + `@algot.plugin` | 03 §4 |
+| 新 broker | `broker/` 加 `BaseBroker` 子类 | 06 §2 |
+| 新数据源 | `data/` 加 `BaseSource` 子类 | 02 §3.1 |
 | 新 execution 模式 | `engine/` 加 executor | 本 §5 |
 
 ---

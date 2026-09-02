@@ -31,15 +31,24 @@ Order (execution) → backtest results / live monitoring
 ## 2. Broker 接口
 
 ```python
+from enum import Enum
+
+class StrategyType(str, Enum):
+    """Strategy 方向类型（区别于 Signal.direction；Direction 含 FLAT/CLOSE_*；StrategyType 仅 long/short）。"""
+    LONG  = "long"
+    SHORT = "short"
+
+
 class BaseBroker(ABC):
     @abstractmethod
     def submit(
         self,
         strategy_id: str,
-        strategy_type: Direction,    # LONG / SHORT（strategy 方向类型）
-        signals: list[Signal],       # 同 bar 内按 emit 顺序
-        bar_time: datetime,
+        strategy_type: StrategyType,           # LONG / SHORT (StrategyType, NOT Direction)
+        signals: list[Signal],                 # 同 bar 内按 emit 顺序
+        bar_time: datetime,                    # emit bar START time
         fill_price_lookup: Callable[[str, datetime], float],  # 给定 (symbol, time) 返回 fill price
+        exec_lag: int = 1,                     # bar T emit → bar T+exec_lag open 撮合 (00 §6.5 G2)
     ) -> list[Order]:
         """撮合一组 Signals，返回 Order 列表。"""
         ...
@@ -76,7 +85,7 @@ class BaseBroker(ABC):
 class PositionSlot:
     strategy_id: str
     symbol: str
-    direction: Direction          # 强制: 这个 slot 是 LONG 或 SHORT（per strategy type）
+    direction: StrategyType          # ← LONG / SHORT（per StrategyType，not full Direction enum；v1 invariant: 恒等于 strategy_type）
     shares: float = 0.0
     avg_cost: float = 0.0
     realized_pnl: float = 0.0
@@ -209,7 +218,7 @@ def apply_flat(strategy_id, broker_state, fill_price_lookup, bar_time):
         if slot.strategy_id != strategy_id or slot.shares == 0:
             continue
         # 等效 CLOSE_*(slot.shares)
-        if slot.direction == Direction.LONG:
+        if slot.direction == StrategyType.LONG:
             close_signal = Signal(
                 direction=Direction.CLOSE_LONG,
                 price=MarketOrder(),
@@ -217,7 +226,7 @@ def apply_flat(strategy_id, broker_state, fill_price_lookup, bar_time):
                 bar_time=bar_time,
             )
             apply_close(slot, broker_state.pools[strategy_id], close_signal, fill_price_lookup(slot.symbol, bar_time), Direction.CLOSE_LONG)
-        elif slot.direction == Direction.SHORT:
+        elif slot.direction == StrategyType.SHORT:
             close_signal = Signal(
                 direction=Direction.CLOSE_SHORT,
                 price=MarketOrder(),
@@ -283,14 +292,14 @@ def submit(self, strategy_id, signals, bar_time, fill_price_lookup):
 
 **Per 02 §5.1 + G2 exec_lag**：
 - Signal 在 bar T emit（bar T START 时）
-- broker 在 bar T+1 OPEN 撮合（exec_lag=1 默认）
-- fill_price = bar T+1 的 open price
+- broker 在 bar T+exec_lag OPEN 撮合（exec_lag=1 默认，per 00 §6.5 G2）
+- fill_price = bar T+exec_lag 的 open price
 
 ```python
-def submit(self, strategy_id, signals, bar_time, fill_price_lookup):
+def submit(self, strategy_id, signals, bar_time, fill_price_lookup, exec_lag=1):
     """bar_time = emit time = bar T START
-    fill 实际在 bar T+1 OPEN（exec_lag=1）"""
-    fill_bar_time = bar_time + 1 bar  # bar T+1
+    fill 实际在 bar T+exec_lag OPEN（per 00 §6.5 G2）"""
+    fill_bar_time = bar_time + exec_lag bar  # bar T+exec_lag
     orders = []
     for signal in signals:
         fill_price = fill_price_lookup(signal.symbol, fill_bar_time, field="open")
@@ -490,10 +499,10 @@ def total_value(pool: CashPool, positions: dict[str, PositionSlot], current_pric
 | 00 §3.5 G3 | stateful plugin 写盘时机（PaperBroker 同型）|
 | 00 §3.6 G4 | data stale drop Signal（在 framework 层，broker 收到合法 Signal）|
 | 00 §6.3 | v1 paper + backtest；v2+ real |
-| 02 §5.1 | bar_time = bar START（fill = bar T+1 OPEN）|
+| 02 §5.1 | bar_time = bar START（fill = bar T+exec_lag OPEN，per 00 §6.5 G2）|
 | 03 §3.3 | Signal plugin 返回 Signal（broker 接收）|
 | 04 §2 | live priority（影响 broker 何时被调用）|
-| 05 §? | Signal 数据结构 / 校验 / lifecycle |
+| 05 §7 | Signal 数据结构 / 校验 / lifecycle |
 
 ---
 
