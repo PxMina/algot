@@ -161,6 +161,80 @@ def sma(close, period=20):
 - ✅ 不强制最小数据长度
 - ➕ INFO 日志增加透明度（TradingView 无）
 
+### 3.5 Plugin state / lifecycle 协议（G3）
+
+**对齐 TradingView `var` 语义**：plugin 通过 `stateful=True` + schema 声明 state；framework 注入 dataclass 实例；plugin 用属性访问（`state.phase = "markup"`、`state.bars += 1`）。
+
+#### 声明示例
+
+```python
+@algot.plugin(
+    category="signal",
+    stateful=True,
+    state={"phase": "accumulation", "bars": 0, "range_high": 0.0},  # schema → 自动生成 dataclass
+    min_bars=100,                                  # G1 warmup
+    state_scope="global",                          # v1 default；v2 用 "per_symbol"
+)
+def wyckoff_signal(state, close, low, high, volume):
+    state.phase = "markup"           # ← 跟 Pine `var phase := "markup"` 语义一致
+    state.bars += 1                  # ← 跟 Pine `var bars += 1` 语义一致
+    state.range_high = max(state.range_high, high)
+
+    if state.phase == "markup" and close > state.range_high:
+        return Signal(direction=OPEN_LONG, ...)
+    return None
+```
+
+**为什么 dataclass（不 dict）**：
+- 类型检查 + IDE 补全
+- `dataclasses.asdict()` 直接序列化
+- 防止拼写错误（`state.phsae` vs `state.phase`）
+
+#### 框架行为
+
+| 阶段 | 行为 |
+|---|---|
+| **注册** | `@algot.plugin` 检测 `stateful=True`；`state={}` schema 生成 dataclass class |
+| **初始化** | framework `state = State()` 实例 → 注入首个 plugin 调用 |
+| **Warmup（bar 0~min_bars-1）** | 调 plugin（state 更新），signal 全 drop（跟 G1 一致） |
+| **Active（bar ≥ min_bars）** | plugin 调，signal 走 G2 执行模型（`time + exec_lag` open） |
+| **Reset** | `algot run --reset` → state = 新 State() 实例 |
+| **Persistence（live only）** | 每 N=10 bar + signal emit 后立即 serialize 到 disk |
+
+#### 失败模式（fail-fast）
+
+- ❌ Plugin 用 `state` 参数但忘加 `stateful=True` → **注册时 raise**
+- ❌ Plugin state 不可 JSON 序列化（live mode） → **注册时 raise**
+
+#### 反模式（不阻止，文档警告）
+
+- ⚠️ 模块级 / 全局变量存 state → 框架无法保证一致性；v1 警告文档，v2 静态分析
+
+#### Persistence 边界
+
+| 类型 | 谁管 |
+|---|---|
+| **Plugin state**（Wyckoff phase / Kaiman params）| framework 序列化 |
+| **Position state**（open positions / cash / equity）| backtest / broker 管 |
+| **Time / bar index** | framework 单独持久化 |
+
+#### TradingView 对齐
+
+| Pine Script | algot G3 |
+|---|---|
+| `var string phase = "accumulation"` | `state={"phase": "accumulation"}` schema |
+| `phase := "markup"` | `state.phase = "markup"` |
+| `bars += 1` | `state.bars += 1` |
+| 首次 bar 自动初始化 | framework `state = State()` 注入 |
+| Chart reload → state 丢失 | live mode 持久化（algot 增量） |
+| 无 framework warmup | `min_bars` 协议（algot 增量） |
+| 无 introspection | framework 可 `state.__dict__` dump（algot 增量） |
+
+#### v2 准备
+
+- `state_scope="global"` (v1 default) → 单 state 实例
+- `state_scope="per_symbol"` (v2) → state keyed by symbol
+
 ---
 
 ## 4. 模块划分（粗）
@@ -194,6 +268,7 @@ algot/
 | 跨 TF 语法 | `resample()` 聚合函数 | 跟"算法即函数"哲学一致，零新语法 |
 | live 模式 | per-call > live_by_tf > run-level > closed 兜底 | 详见 04 §3.1；4 级优先级，默认安全 |
 | Signal 执行时机 | bar `time + exec_lag` open，exec_lag ≥ 1（默认 1） | 禁 lookahead；标准 backtest 约定 |
+| Stateful plugin | `@algot.plugin(stateful=True, state={...})` schema-driven dataclass | 对齐 TradingView `var`；属性访问（`state.phase = ...`、`state.bars += 1`） |
 | 多 TF 详细规范 | 见 `04-multi-timeframe.md` | 单独成 spec |
 
 ---
@@ -227,7 +302,7 @@ algot/
      - `risk`（positions → Signal reduce/close）— stop_loss / max_drawdown
      - `scheduler`（time → bar）— session_calendar
    - **v1 落地范围**：仅 `factor` + `signal` 两类够用；其余 4 类留 v1.x
-   - **Plugin 元数据**：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, min_bars=N, deps=[...], version=...)`（详见 §3.4 暖机协议）
+   - **Plugin 元数据**：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, min_bars=N, deps=[...], version=...)`（warmup 详见 §3.4；stateful lifecycle 详见 §3.5）
    - **Signal 数据结构（字段定义）**：
      ```python
      @dataclass
