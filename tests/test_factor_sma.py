@@ -343,27 +343,48 @@ def test_crossover_registered():
 
 
 def test_crossover_detects_cross():
-    """x crosses above y → 1.0 at crossover bar."""
-    x = _make_seq([1, 2, 5, 4, 3, 6, 7, 8])  # crosses at data[2]=5
-    y = _make_seq([3, 3, 3, 3, 3, 3, 3, 3])
+    """x crosses above y → 1.0 exactly at the cross bar (data idx 2)."""
+    x = _make_seq([1, 2, 5, 6, 7, 8])  # crosses above at data[2]=5, stays above
+    y = _make_seq([3, 3, 3, 3, 3, 3])
 
     result = algot.crossover(x, y)
-    # At least one crossover should be detected
-    assert np.sum(result.data == 1.0) >= 1
+    assert result.data.tolist() == [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
 
 
-def test_crossunder_registered():
-    assert "crossunder" in _REGISTRY
+def test_crossover_no_false_positive_below():
+    """Monotone-below x never crosses above → all zeros."""
+    x = _make_seq([1, 2, 2.5, 2.8, 2.9, 2.7, 2.0])
+    y = _make_seq([3, 3, 3, 3, 3, 3, 3])
+    assert algot.crossover(x, y).data.sum() == 0.0
 
 
 def test_crossunder_detects_cross():
-    """x crosses below y → 1.0."""
-    x = _make_seq([5, 4, 1, 2, 3, 0, 1, 2])
-    y = _make_seq([3, 3, 3, 3, 3, 3, 3, 3])
+    """x crosses below y → 1.0 exactly at the cross bar (data idx 3)."""
+    x = _make_seq([5, 4, 3.5, 1, 0, 2])  # falls below at data[3]=1, stays below
+    y = _make_seq([3, 3, 3, 3, 3, 3])
 
     result = algot.crossunder(x, y)
-    # At least one crossunder detected
-    assert np.sum(result.data == 1.0) >= 1
+    assert result.data.tolist() == [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+
+
+def test_crossunder_no_false_positive_above():
+    """Monotone-above x never crosses below → all zeros."""
+    x = _make_seq([5, 4, 3.5, 3.2, 3.1, 4, 6])
+    y = _make_seq([3, 3, 3, 3, 3, 3, 3])
+    assert algot.crossunder(x, y).data.sum() == 0.0
+
+
+def test_cross_direction_mirror():
+    """Same input mirrored → crossover and crossunder swap roles."""
+    up_x = _make_seq([1, 2, 5, 4])
+    up_y = _make_seq([3, 3, 3, 3])
+    dn_x = _make_seq([5, 4, 1, 2])
+    dn_y = _make_seq([3, 3, 3, 3])
+    # up-cross at data[2]; down-cross of mirrored at data[2]
+    assert algot.crossover(up_x, up_y).data[2] == 1.0
+    assert algot.crossunder(up_x, up_y).data[2] == 0.0
+    assert algot.crossunder(dn_x, dn_y).data[2] == 1.0
+    assert algot.crossover(dn_x, dn_y).data[2] == 0.0
 
 
 # ============================================================================

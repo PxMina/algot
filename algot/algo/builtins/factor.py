@@ -444,31 +444,30 @@ def donchian_low(x, n=20):
     min_bars=0,
 )
 def crossover(x, y):
-    """Crossover signal: x crosses above y → 1.0, else 0.0 (per 03 §11).
+    """Crossover: x crosses above y → 1.0 at that bar, else 0.0 (03 §11).
 
-    seq[N] = 1.0 if x[N-1] <= y[N-1] AND x[N] > y[N] (newest-to-oldest convention).
+    result.data[j] = 1.0 iff x_j > y_j and x_{j-1} <= y_{j-1}
+    (j=0 is never a cross; j is chronological data position).
+    TradingView semantics: golden cross fires on the bar where the
+    fast line first closes above the slow line.
     """
     seq_x = _ensure_seq(x)
     seq_y = _ensure_seq(y)
     n = len(seq_x)
-    if n < 2:
-        return Sequence(
-            data=np.zeros(n, dtype=np.float64),
-            meta=dict(seq_x.meta),
-            index=seq_x.index,
+    if len(seq_y) != n:
+        raise ValueError(
+            f"crossover: x and y must be same length, got {n} vs {len(seq_y)}"
         )
 
     result = np.zeros(n, dtype=np.float64)
-    for i in range(1, n):
-        # seq_x[i] is current step back; seq_x[i-1] is 1 more step back (older)
-        prev_idx = n - 1 - (i - 1)
-        curr_idx = n - 1 - i
-        prev_x = seq_x.data[prev_idx]
-        curr_x = seq_x.data[curr_idx]
-        prev_y = seq_y.data[prev_idx]
-        curr_y = seq_y.data[curr_idx]
-        if prev_x <= prev_y and curr_x > curr_y:
-            result[i] = 1.0
+    xd, yd = seq_x.data, seq_y.data
+    for j in range(1, n):
+        # skip comparisons where either side is NaN (NaN passthrough)
+        if np.isnan(xd[j]) or np.isnan(yd[j]) \
+                or np.isnan(xd[j - 1]) or np.isnan(yd[j - 1]):
+            continue
+        if xd[j] > yd[j] and xd[j - 1] <= yd[j - 1]:
+            result[j] = 1.0
     return Sequence(data=result, meta=dict(seq_x.meta), index=seq_x.index)
 
 
@@ -480,27 +479,27 @@ def crossover(x, y):
     min_bars=0,
 )
 def crossunder(x, y):
-    """Crossunder signal: x crosses below y → 1.0, else 0.0 (per 03 §11)."""
+    """Crossunder: x crosses below y → 1.0 at that bar, else 0.0 (03 §11).
+
+    result.data[j] = 1.0 iff x_j < y_j and x_{j-1} >= y_{j-1}.
+    Death-cross semantics.
+    """
     seq_x = _ensure_seq(x)
     seq_y = _ensure_seq(y)
     n = len(seq_x)
-    if n < 2:
-        return Sequence(
-            data=np.zeros(n, dtype=np.float64),
-            meta=dict(seq_x.meta),
-            index=seq_x.index,
+    if len(seq_y) != n:
+        raise ValueError(
+            f"crossunder: x and y must be same length, got {n} vs {len(seq_y)}"
         )
 
     result = np.zeros(n, dtype=np.float64)
-    for i in range(1, n):
-        prev_idx = n - 1 - (i - 1)
-        curr_idx = n - 1 - i
-        prev_x = seq_x.data[prev_idx]
-        curr_x = seq_x.data[curr_idx]
-        prev_y = seq_y.data[prev_idx]
-        curr_y = seq_y.data[curr_idx]
-        if prev_x >= prev_y and curr_x < curr_y:
-            result[i] = 1.0
+    xd, yd = seq_x.data, seq_y.data
+    for j in range(1, n):
+        if np.isnan(xd[j]) or np.isnan(yd[j]) \
+                or np.isnan(xd[j - 1]) or np.isnan(yd[j - 1]):
+            continue
+        if xd[j] < yd[j] and xd[j - 1] >= yd[j - 1]:
+            result[j] = 1.0
     return Sequence(data=result, meta=dict(seq_x.meta), index=seq_x.index)
 
 
