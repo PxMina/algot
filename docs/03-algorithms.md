@@ -108,12 +108,11 @@ def sma(close: Sequence, n: int = 20) -> Sequence:
     category="signal",
     shape_in={"close": "Sequence[float64]"},
     shape_out="Signal | None",
-    pure=False,        # signal 是 stateful 的（用 stateful=True 替代）
-    stateful=True,     # G3
-    state_type=dict,   # 默认 dict
+    stateful=True,
     min_bars=1,
 )
 def crossover_above(close: Sequence, threshold: float = 100.0) -> Signal | None:
+    # state 是框架注入的局部变量（dict 默认；详见 §8.2）
     if state["prev_close"] is None:
         state["prev_close"] = close[0]
         return None
@@ -122,25 +121,29 @@ def crossover_above(close: Sequence, threshold: float = 100.0) -> Signal | None:
     state["prev_close"] = close[0]
     
     if crossed:
+        # 完整 Signal API 见 05 §7；导入：from algot import Direction, MarketOrder, FixedSize
         return Signal(
-            direction="long",
-            price="market",
-            size="all",
-            time=close.index[-1],  # 当前 bar START
-            validity=1,            # 单 bar 有效
+            direction=Direction.LONG,
+            price=MarketOrder(),
+            size=FixedSize(shares=100),
+            bar_time=close.index[-1],  # 当前 bar START (02 §5.1)
+            validity=1,                 # 单 bar 有效
+            tags={"reason": "crossover_above"},
         )
     return None
 ```
 
-**Signal 数据结构**（详见 05-signals，本文档不展开）：
+**Signal 数据结构**（详见 05-signals §7，本文档不展开）：
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `direction` | `enum` | long / short / flat / close_long / close_short |
-| `price` | `"market"` \| `float` \| `tuple[float, float]` | 市价 / 限价 / 限价区间 |
-| `size` | `"all"` \| `float` \| `dict` | 全平 / 固定股数 / {pct, risk_$ ...} |
-| `time` | `datetime` | 信号触发的 bar 时间 |
-| `validity` | `int` | 有效 bar 数（1 = 仅当前 bar）|
+| `direction` | `Direction` enum | long / short / flat / close_long / close_short |
+| `price` | `MarketOrder` \| `LimitOrder` \| `LimitRange` | 市价 / 限价 / 限价区间 |
+| `size` | `FixedSize` \| `PctSize` \| `RiskSize` | 固定股数 / 占比 / 风险驱动 |
+| `bar_time` | `datetime` | bar START time (UTC) |
+| `validity` | `int` | 有效 bar 数（1 = 仅当前 bar；-1 = 永久）|
+| `signal_id` | `str` (UUID) | 自动生成 |
+| `tags` | `dict` | 用户 metadata |
 
 ---
 
@@ -655,7 +658,7 @@ def my_signal(close, sma_20):           # ← deps 自动注入参数
 | `ta.crossunder(a, b)` | `crossunder(a, b)` | 同 |
 | `ta.vwap()` | `vwap(bars)` | algot 需显式传 bars |
 | `ta.rescale(src, ...)` | `resample(...)` | 04 §2 实现 |
-| `var float x = na` | `@algot.plugin(stateful=True, state_type=dict, state={"x": None})` | algot 更声明式 |
+| `var float x = na` | `@algot.plugin(stateful=True, state_type=SomeState)` | 显式 dataclass / dict |
 | `ta.barssince(condition)` | `barssince(seq)`（v2）| v1 不带 |
 | `ta.valuewhen(condition, src, n)` | `valuewhen(...)`（v2）| v1 不带 |
 

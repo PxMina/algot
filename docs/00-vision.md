@@ -188,22 +188,34 @@ def sma(close, period=20):
 #### 声明示例
 
 ```python
+@dataclass
+class WyckoffState:
+    phase: str = "accumulation"
+    bars: int = 0
+    range_high: float = 0.0
+
 @algot.plugin(
     category="signal",
     stateful=True,
-    state={"phase": "accumulation", "bars": 0, "range_high": 0.0},  # schema → 自动生成 dataclass
-    min_bars=100,                                  # G1 warmup
-    state_scope="global",                          # v1 default；v2 用 "per_symbol"
+    state_type=WyckoffState,           # ← 显式声明 state 类型（dataclass；详见 03 §8.2）
+    min_bars=100,                      # G1 warmup
+    state_scope="global",              # v1 default；v2 用 "per_symbol"
 )
-def wyckoff_signal(state, close, low, high, volume):
-    state.phase = "markup"           # ← 跟 Pine `var phase := "markup"` 语义一致
-    state.bars += 1                  # ← 跟 Pine `var bars += 1` 语义一致
+def wyckoff_signal(close, low, high, volume):    # ← state 不在签名里（框架注入）
+    state.phase = "markup"             # ← 属性访问（dataclass）
+    state.bars += 1                    # ← 跟 Pine `var bars += 1` 语义一致
     state.range_high = max(state.range_high, high)
 
     if state.phase == "markup" and close > state.range_high:
-        return Signal(direction=OPEN_LONG, ...)
+        return Signal(direction=Direction.LONG, ...)    # ← 5-state enum，见 05 §2
     return None
 ```
+
+> **state 注入机制**（v1 锁定，与 03 §8.1 对齐）：
+> - `state` 是**框架注入的局部变量**，**不在函数签名里**
+> - `state_type=dict` → `state["key"]`
+> - `state_type=SomeDataclass` → `state.attr`
+> - framework 在每次 plugin 调用前注入 `state`，调用后读取写盘
 
 **为什么 dataclass（不 dict）**：
 - 类型检查 + IDE 补全
@@ -214,7 +226,7 @@ def wyckoff_signal(state, close, low, high, volume):
 
 | 阶段 | 行为 |
 |---|---|
-| **注册** | `@algot.plugin` 检测 `stateful=True`；`state={}` schema 生成 dataclass class |
+| **注册** | `@algot.plugin` 检测 `stateful=True`；`state_type=SomeType`（用户显式提供 dict / dataclass，详见 03 §8.2）|
 | **初始化** | framework `state = State()` 实例 → 注入首个 plugin 调用 |
 | **Warmup（bar 0~min_bars-1）** | 调 plugin（state 更新），signal 全 drop（跟 G1 一致） |
 | **Active（bar ≥ min_bars）** | plugin 调，signal 走 G2 执行模型（`time + exec_lag` open） |
@@ -223,7 +235,7 @@ def wyckoff_signal(state, close, low, high, volume):
 
 #### 失败模式（fail-fast）
 
-- ❌ Plugin 用 `state` 参数但忘加 `stateful=True` → **注册时 raise**
+- ❌ Plugin 访问 `state` 局部变量但忘加 `stateful=True` → **注册时 raise**
 - ❌ Plugin state 不可 JSON 序列化（live mode） → **注册时 raise**
 
 #### 反模式（不阻止，文档警告）
@@ -242,7 +254,7 @@ def wyckoff_signal(state, close, low, high, volume):
 
 | Pine Script | algot G3 |
 |---|---|
-| `var string phase = "accumulation"` | `state={"phase": "accumulation"}` schema |
+| `var string phase = "accumulation"` | `state_type=WyckoffState`（显式 dataclass；详见 03 §8.2）|
 | `phase := "markup"` | `state.phase = "markup"` |
 | `bars += 1` | `state.bars += 1` |
 | 首次 bar 自动初始化 | framework `state = State()` 注入 |
@@ -352,7 +364,7 @@ algot/
 | 跨 TF 语法 | `resample()` 聚合函数 | 跟"算法即函数"哲学一致，零新语法 |
 | live 模式 | per-call > live_by_tf > run-level > closed 兜底 | 详见 04 §3.1；4 级优先级，默认安全 |
 | Signal 执行时机 | bar `time + exec_lag` open，exec_lag ≥ 1（默认 1） | 禁 lookahead；标准 backtest 约定 |
-| Stateful plugin | `@algot.plugin(stateful=True, state={...})` schema-driven dataclass | 对齐 TradingView `var`；属性访问（`state.phase = ...`、`state.bars += 1`） |
+| Stateful plugin | `@algot.plugin(stateful=True, state_type=SomeType)` 显式 dict / dataclass | 对齐 TradingView `var`；属性访问（`state.phase = ...`、`state.bars += 1`） |
 | Data quality | gap=NaN+INFO log; staleness=per-TF 阈值+WARN+drop signal | 对齐 TV NaN 兜底；live 增量 staleness 检查 |
 | 多 symbol | v1 = 单 symbol; multi-symbol = v2 | YAGNI; host 层 `for sym in universe` 循环 |
 | 多 TF 详细规范 | 见 `04-multi-timeframe.md` | 单独成 spec |
@@ -389,6 +401,14 @@ algot/
    - **v1**：函数调用为主（`sma(close, 20)` 即调 sma 插件）
    - **v1**：用户用 `@algot.plugin(category=..., pure=True, ...)` 注册新插件，可被 DSL 引用
    - **v2+**：图式串联（DAG），节点 = 插件调用，边 = 数据流；DSL 字符串 = DAG 序列化形式（仅内部）
+   - **策略 direction-typed 约束**（v1 锁定，per William 决定 2026-09-02）：
+     - 每个 strategy 必须声明 `type: long | short`（`strategy.yaml`）
+     - `long` strategy 仅允许 emit `LONG` / `CLOSE_LONG` / `FLAT`（FLAT = 关自身多单）
+     - `short` strategy 仅允许 emit `SHORT` / `CLOSE_SHORT` / `FLAT`（FLAT = 关自身空单）
+     - 越界 emit → framework raise（开发期立即暴露 bug）
+     - 资金池独立：每 strategy 各自 input `initial_capital`，不共享
+     - Position slot 模型：per-(strategy, symbol) 单 slot；同 ticker 不同 strategy 仓位独立
+     - 详见 `05 §9` / `06 §3` / Q3 决策
 
 5. **插件 I/O 契约（含 Signal 接口）**（v1 必须先定，否则插件骨架 + §1.2 都落不了）：
    - **插件分类（决定 I/O 约定形态）**：
@@ -406,19 +426,19 @@ algot/
      - `signal` → `Signal` 实例或 `None`
    - **错误处理**：默认 **throw**（plugin raise 即 framework raise）；data 层 NaN passthrough **不掩盖数据问题**（遵循 Lesson 22：warning + 业务不阻断）
    - **API 演进**：v1.x 仅 additive（新 plugin 类别 / 新 metadata 字段可加）；v2.0 才允许 breaking（移除字段、改 metadata key）
-   - **Signal 数据结构（字段定义）**：
-     ```python
-     @dataclass
-     class Signal:
-         symbol: str              # 标的 ticker（如 'AAPL' / 'BTC/USDT'）
-         time: int                # 触发 bar 序号（与 Sequence.index 对齐）
-         direction: Direction     # enum: OPEN_LONG / OPEN_SHORT / CLOSE_LONG / CLOSE_SHORT
-         price: float | None      # None=市价；数值=限价
-         size: float              # 仓位单位数（shares/contracts；单位由 source data 决定）
-         expiry: int | None = 0   # 0=仅当根 bar（默认）；N=N bar 后过期；None=永久
-         tag: str | None = None   # 可选标签（backtest 分类 / 调试）
-         id: str | None = None    # 框架自动注入 UUID（追踪 / cancel）
-     ```
+   - **Signal 数据结构**：详见 `05-signals.md §7`（canonical 定义，本节为概要）。关键字段：
+     - `direction`: Direction enum（**5 状态 v1 全实现**：LONG / SHORT / FLAT / CLOSE_LONG / CLOSE_SHORT）
+     - `price`: MarketOrder | LimitOrder | LimitRange（v1 paper 主 MarketOrder）
+     - `size`: FixedSize | PctSize | RiskSize（三类 v1 全支持）
+     - `bar_time`: 当前 bar START time（02 §5.1 UTC）
+     - `validity`: `1`=当前 bar / `N`=N bars / `-1`=永久
+     - `signal_id`: UUID auto
+     - `tags`: dict metadata
+   - **Direction 5 状态语义**（per William 决定 FLAT 入 v1）：
+     - `LONG` / `SHORT`: 加仓到对应 slot（**不**反向平另一 slot；无 reverse 概念）
+     - `CLOSE_LONG` / `CLOSE_SHORT`: 减仓对应 slot；无持仓时 no-op + WARN
+     - `FLAT`: 关闭**当前 strategy 自己的所有持仓**（局限 strategy 作用域）
+     - 完整语义矩阵：见 `05 §2.1` / `05 §10` 同 bar 多 Signal 顺序应用
    - **执行模型 (G2)**：Signal 消费时机 = bar `Signal.time + strategy.exec_lag` open
      - `strategy.exec_lag` in `strategy.yaml`，默认 = 1
      - 默认值（exec_lag=1）：下 bar open（标准 backtest 约定）
