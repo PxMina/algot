@@ -437,6 +437,40 @@ for bar in bars:
 
 **Backtest 模式**：每 10 bar 写盘（emit 后不强制写，因为 backtest 结束后丢弃）。**Live 模式**：emit 后立即写 + 每 10 bar 写。
 
+### 8.7 Live mode 重启 state 加载（M1 明确）
+
+**机制**（live mode 启动时自动执行）：
+
+1. 框架读 `state_dir/`（默认 `./.algot_state/`）下每个 stateful plugin 的 latest pickle
+2. 反序列化 → 注入 plugin 下次调用（替换默认 state）
+3. framework 从 last persisted bar 继续推进
+
+```python
+# 引擎启动伪代码
+def startup_restore(self):
+    for plugin in self.stateful_plugins:
+        state_path = Path(f".algot_state/{plugin.name}.pkl")
+        if state_path.exists():
+            with open(state_path, "rb") as f:
+                saved_state = pickle.load(f)
+            plugin.state = saved_state
+            log.info(f"[restore] {plugin.name} state loaded, bar_count={saved_state.get('bar_count', '?')}")
+        else:
+            plugin.state = make_state_from_schema(plugin.state_type)
+            log.info(f"[init] {plugin.name} state = {plugin.state_type}() fresh")
+```
+
+**CLI 启动选项**：
+- `algot run` — 自动 restore（默认）
+- `algot run --reset` — 忽略磁盘，state = 新实例（开发 / 重置用）
+
+**失败模式**（safe default + observable，对齐 G4）：
+- 损坏 pickle / unpickle 失败 → **WARN + 用默认 state**（不 raise）
+- schema 不匹配（旧 plugin version 与新 pickle 不一致） → **WARN + 用默认 state**
+- pickle 太旧（跨大版本） → **WARN + 用默认 state**
+
+**Backtest 模式不 restore**：每次 backtest 都是 fresh state（per 06 §3）。
+
 ### 8.4 Warmup 期间不写盘
 
 ```python
@@ -548,6 +582,38 @@ def cross_signal(close, n=20):
 ---
 
 ## 10. Per-Bar Execution（每 bar 怎么调）
+
+### 10.0 Plugin execution order / DAG
+
+**Plugin 顺序来源**：
+
+1. **DAG from `deps=`**：框架从 `@algot.plugin(deps=[...])` 构建依赖图，topological sort 决定执行顺序
+2. **同类内**：factor 按 DAG 顺序；signal 按注册顺序（同 topo level 内）
+3. **跨类**：factor 永远先于 signal（signal 通常 deps 指向 factor 输出）
+
+**DAG 构建示例**：
+```python
+@algot.plugin(category="factor")  # 无 deps
+def sma(close, n=20): ...
+
+@algot.plugin(category="signal", deps=["sma"])  # ← 依赖 sma 输出
+def golden_cross(close, sma):
+    ...
+```
+
+框架自动：
+1. 解析 `deps` → 构建图
+2. topological sort → factor 顺序 `[sma]`，signal 顺序 `[golden_cross]`
+3. 每 bar 调用 sma → 缓存输出到 `_store["sma"]` → 调用 `golden_cross(close, sma=...)`
+
+**Plugin 调用时机**（M5 明确）：
+- **Backtest 模式**：每 bar **close 后**调用 plugin（plugin 看到的是已完成 bar 的完整数据）
+- **Live 模式**：每新 tick 推送（partial bar，per 04 §3.1 live priority）
+- Plugin emit Signal 时 `Signal.bar_time` = 当前调用 bar 的 START time（02 §5.1）
+
+**Cycle 处理**：deps 形成环 → **注册时 raise**（plugin 不能形成循环依赖）
+
+**未声明 deps**：plugin 顺序按 registration 顺序（file order）；推荐手动 `@algot.plugin(deps=["plugin_a"], ...)` 强制声明，避免隐式顺序依赖。
 
 ### 10.1 顺序
 

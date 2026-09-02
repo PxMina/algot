@@ -248,6 +248,12 @@ def apply_flat(strategy_id, broker_state, fill_price_lookup, bar_time):
 | `CLOSE_SHORT` | `− shares × fill_price` | `− shares` | `+ (avg_cost - fill) × shares` |
 | `FLAT` | 等效关所有 | 等效关所有 | 等效关所有 |
 
+**跨 strategy 同 bar Signal 协调**（M2 明确）：
+
+- `long_strategy` 与 `short_strategy` 同 bar emit Signal 时，**各自独立 broker 撮合**，无顺序协调。
+- 例：`long_strategy` emit `LONG 100` + `short_strategy` emit `SHORT 50` 同 bar → 两 broker 分别 fill（按各自 `fill_price_lookup` + cash 检查）；最终两仓并行存在（hedge / 独立管理，per 00 §6.4 strategy direction-typed 约束）。
+- **单 strategy 内多 Signal 仍按 Q4 顺序应用**（详 §5.4）。
+
 ---
 
 ## 5. Q1-Q4 实现要点
