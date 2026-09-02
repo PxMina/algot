@@ -141,8 +141,8 @@ class Signal:
     """
     symbol: str
     direction: Direction
-    size: Size = field(default_factory=lambda: FixedSize(shares=0.0))
     price: Price = field(default_factory=MarketOrder)
+    size: Size = field(default_factory=lambda: FixedSize(shares=0.0))
     bar_time: datetime = field(default_factory=_now_utc)
     validity: int = 1
     signal_id: str = field(default_factory=lambda: str(uuid4()))

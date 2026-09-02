@@ -313,3 +313,50 @@ def test_finalize_marks_open_position():
     assert s["unrealized_pnl"] == pytest.approx(1000.0)
     # equity = cash (90000) + unrealized (1000)
     assert s["equity"] == pytest.approx(91_000)
+
+
+# ---------- M3 review: FLAT audit trail + requested_shares semantics ----------
+
+def test_flat_produces_close_orders_in_history():
+    """FLAT expands to per-slot CLOSE_* orders in fill_history (review #3)."""
+    b = _make_broker()
+    b.submit("s1", StrategyType.LONG, [_sig(size=FixedSize(shares=100))],
+             T0, _prices(100.0), exec_lag=1)
+    orders = b.submit(
+        "s1", StrategyType.LONG,
+        [Signal.flat("AAPL", bar_time=T0 + timedelta(seconds=60))],
+        T0 + timedelta(seconds=60), _prices(110.0), exec_lag=1,
+    )
+    # FLAT now returns the actual close order(s), not a summary stub
+    assert len(orders) == 1
+    o = orders[0]
+    assert o.direction == Direction.CLOSE_LONG
+    assert o.status == "FILLED"
+    assert o.filled_shares == pytest.approx(100)
+    assert o.fill_price == pytest.approx(110.0)
+    # fill_history has: LONG open + CLOSE_LONG (2 entries, both real fills)
+    assert [f.direction for f in b.fill_history] == \
+        [Direction.LONG, Direction.CLOSE_LONG]
+    assert b.get_realized_pnl("s1") == pytest.approx(1000.0)
+
+
+def test_flat_on_empty_position_returns_empty():
+    """FLAT with nothing held → no orders, no crash."""
+    b = _make_broker()
+    orders = b.submit(
+        "s1", StrategyType.LONG,
+        [Signal.flat("AAPL", bar_time=T0)],
+        T0, _prices(100.0), exec_lag=1,
+    )
+    assert orders == []
+
+
+def test_scale_down_keeps_original_requested_shares():
+    """requested_shares = user request, filled_shares = actual (review #7)."""
+    b = _make_broker(capital=1_000)
+    orders = b.submit("s1", StrategyType.LONG, [_sig(size=FixedSize(shares=100))],
+                      T0, _prices(100.0), exec_lag=1)
+    o = orders[0]
+    assert o.status == "FILLED"
+    assert o.requested_shares == pytest.approx(100)   # original request
+    assert o.filled_shares == pytest.approx(10)       # scaled to affordable

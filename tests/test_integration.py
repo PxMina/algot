@@ -326,3 +326,40 @@ def test_engine_deps_ohlcv_factor(db_path):
     result = engine.run()
     assert not np.isnan(captured["atr_val"])
     assert captured["atr_val"] > 0
+
+
+def test_engine_warns_on_misaligned_bar_time(db_path, caplog):
+    """Signal.bar_time != current bar → WARN (not silent EXPIRED) (review #4)."""
+    from datetime import timedelta
+    import logging
+
+    @plugin(
+        category="signal",
+        shape_in={"close": "Sequence[float64]"},
+        shape_out="Signal | None",
+        stateful=True,
+        state_type={},
+        min_bars=1,
+    )
+    def sig_bad_time(close, state):
+        # deliberately wrong bar_time (defaults are fine — this one is off)
+        return Signal(
+            symbol=close.meta["symbol"],
+            direction=Direction.LONG,
+            price=MarketOrder(),
+            size=FixedSize(shares=1),
+            bar_time=close.index[-1] + timedelta(days=1),  # wrong bar
+        )
+
+    strat = Strategy(id="s", type=StrategyType.LONG, capital=100000.0,
+                     symbols=["AAPL"], signals=["sig_bad_time"])
+    engine = BacktestEngine(strat, SqliteSource(db_path), "AAPL", (1, "min"))
+    with caplog.at_level(logging.WARNING, logger="algot.engine.backtest"):
+        result = engine.run()
+    # engine warns about misalignment
+    assert "bar_time" in caplog.text
+    # and the misaligned fills EXPIRED (no bogus fills at a future price)
+    filled = [o for o in result["orders"] if o.status == "FILLED"]
+    assert filled == []
+    expired = [o for o in result["orders"] if o.status == "EXPIRED"]
+    assert len(expired) > 0

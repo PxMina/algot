@@ -115,8 +115,13 @@ class BacktestBroker(BaseBroker):
             order = self._apply_one(
                 strategy_id, signal, fill_bar_time, fill_price_lookup
             )
-            orders.append(order)
-            self.fill_history.append(order)
+            if isinstance(order, list):
+                # FLAT expands to one Order per closed slot (M3 review #3)
+                orders.extend(order)
+                self.fill_history.extend(order)
+            else:
+                orders.append(order)
+                self.fill_history.append(order)
         return orders
 
     # ---------- single-signal application (06 §4.1-§4.4) ----------
@@ -172,20 +177,10 @@ class BacktestBroker(BaseBroker):
                 signal.signal_id[:8],
             )
 
-        # FLAT handled first: close ALL this strategy's slots (06 §4.4)
+        # FLAT handled first: close ALL this strategy's slots (06 §4.4).
+        # Returns one Order per actually-closed slot (audit trail, review #3).
         if signal.direction == Direction.FLAT:
-            self._apply_flat(strategy_id, fill_bar_time, lookup)
-            return Order(
-                signal_id=signal.signal_id,
-                strategy_id=strategy_id,
-                symbol=signal.symbol,
-                direction=Direction.FLAT,
-                status="FILLED",
-                requested_shares=0.0,
-                filled_shares=0.0,
-                fill_price=fill_price,
-                fill_time=fill_bar_time,
-            )
+            return self._apply_flat(strategy_id, fill_bar_time, lookup)
 
         try:
             requested = self._compute_shares(signal, pool, slot, fill_price)
@@ -269,7 +264,12 @@ class BacktestBroker(BaseBroker):
         raise ValueError(f"unknown size type {type(size).__name__}")
 
     def _open_long(self, pool, slot, signal, shares, fill_price, fill_bar_time) -> Order:
-        """Buy shares; insufficient cash → scale down + WARN (06 §4.1)."""
+        """Buy shares; insufficient cash → scale down + WARN (06 §4.1).
+
+        requested_shares on the Order = the user's original request;
+        filled_shares = actual (post scale-down).  (M3 review #7)
+        """
+        requested = shares
         required = shares * fill_price
         if required > pool.current_cash:
             affordable = pool.current_cash / fill_price
@@ -277,7 +277,7 @@ class BacktestBroker(BaseBroker):
                 return Order(
                     signal_id=signal.signal_id, strategy_id=pool.strategy_id,
                     symbol=slot.symbol, direction=Direction.LONG, status="REJECTED",
-                    requested_shares=shares, rejection_reason=(
+                    requested_shares=requested, rejection_reason=(
                         f"insufficient long pool cash: need ${required:.2f}, "
                         f"have ${pool.current_cash:.2f}"
                     ), rejection_kind="INSUFFICIENT_CASH",
@@ -294,7 +294,7 @@ class BacktestBroker(BaseBroker):
         return Order(
             signal_id=signal.signal_id, strategy_id=pool.strategy_id,
             symbol=slot.symbol, direction=Direction.LONG, status="FILLED",
-            requested_shares=shares, filled_shares=shares,
+            requested_shares=requested, filled_shares=shares,
             fill_price=fill_price, fill_time=fill_bar_time,
         )
 
@@ -371,8 +371,13 @@ class BacktestBroker(BaseBroker):
         slot.avg_cost = new_total_cost / slot.shares
 
     def _apply_flat(self, strategy_id: str, fill_bar_time: datetime,
-                    lookup: FillLookup) -> None:
-        """FLAT: close ALL slots of this strategy (06 §4.4)."""
+                    lookup: FillLookup) -> list[Order]:
+        """FLAT: close ALL slots of this strategy (06 §4.4).
+
+        Returns one FILLED Order per closed slot (audit trail); [] if the
+        strategy held nothing.
+        """
+        out: list[Order] = []
         for key, slot in list(self._slots.items()):
             if slot.strategy_id != strategy_id or slot.shares <= 0:
                 continue
@@ -386,8 +391,10 @@ class BacktestBroker(BaseBroker):
                     size=FixedSize(shares=slot.shares),
                     bar_time=fill_bar_time,
                 )
-                self._close(pool, slot, sig, slot.shares, fill_price, fill_bar_time,
-                            Direction.CLOSE_LONG)
+                out.append(self._close(
+                    pool, slot, sig, slot.shares, fill_price, fill_bar_time,
+                    Direction.CLOSE_LONG,
+                ))
             else:
                 sig = Signal(
                     symbol=slot.symbol,
@@ -396,8 +403,11 @@ class BacktestBroker(BaseBroker):
                     size=FixedSize(shares=slot.shares),
                     bar_time=fill_bar_time,
                 )
-                self._close(pool, slot, sig, slot.shares, fill_price, fill_bar_time,
-                            Direction.CLOSE_SHORT)
+                out.append(self._close(
+                    pool, slot, sig, slot.shares, fill_price, fill_bar_time,
+                    Direction.CLOSE_SHORT,
+                ))
+        return out
 
     # ---------- finalize ----------
 

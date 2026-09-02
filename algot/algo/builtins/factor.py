@@ -3,9 +3,12 @@
 Implementation notes:
     - All factors accept Sequence[float64] or OHLCVSequence.
     - Bars where insufficient data → NaN (per G1 warmup).
-    - For each factor, 'period' is the N parameter (window size).
-    - In v1, period is hardcoded per factor; user-defined period via
-      parameterization is a v1.x feature.
+    - Rolling-window factors take `n` (period) as a keyword arg with an
+      industry-standard default (sma/ema/stddev/donchian = 20,
+      rsi/atr/adx = 14); default kept compatible with older calls.
+    - @plugin(min_bars) is the static declaration; dynamic `n` calls
+      (e.g. sma(x, n=5)) produce NaN earlier than min_bars — the framework
+      does not introspect variable params (per G1), signals must handle NaN.
 
 Factor list (per 03 §11):
     sma           : simple moving average

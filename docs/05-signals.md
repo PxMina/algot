@@ -166,9 +166,12 @@ RiskSize(risk_amount=100, stop_loss=95)
 
 **计算**：broker 在撮合时按 entry price 计算 shares。
 
-**特殊 case**：
+**特殊 case**（M3 review 对齐实现）：
 - `risk_amount > pool_cash` → WARN + cap to pool_cash（shares 调整）
-- `stop_loss` 与 entry 同方向错乱（如 LONG 但 stop_loss > entry）→ `ValueError` at construction
+- `stop_loss` 与 entry 同方向错乱（如 LONG 但 stop_loss >= entry）→
+  **broker 撮合时 REJECTED（INVALID_SIZE）**。构造时无 entry price（entry
+  由撮合价决定），无法在 construction 校验；broker 拿到 fill price 后校验
+  并拒单，不 raise（Order 级错误，06 §9）。
 
 ### 4.4 Size 对 FLAT 的约束
 

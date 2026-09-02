@@ -166,6 +166,16 @@ class BacktestEngine:
             s = self._call_signal(inputs, i)
             if s is None:
                 continue
+            # G2 sanity: signal.bar_time should be THIS bar's START (02 §5.1).
+            # A plugin using the Signal default (now()) would EXPIRED silently.
+            bar_start = bars.close.index[i]
+            if s.bar_time != bar_start:
+                log.warning(
+                    "[%s] signal %s bar_time %s != current bar %s; "
+                    "fill may EXPIRED (use close.index[-1] as bar_time)",
+                    self.strategy.id, s.signal_id[:8],
+                    s.bar_time, bar_start,
+                )
             all_signals.append(s)
             broker.submit(
                 strategy_id=self.strategy.id,
