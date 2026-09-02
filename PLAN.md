@@ -676,12 +676,14 @@ algot run --reset examples/golden_cross.yaml
 ## 13. 跟踪与里程碑
 
 - [x] **M1**: 骨架 + Sequence + SqliteSource (commit ca40fb2, tag M1, 2026-09-02)
-- [x] **M2**: Plugin 框架 + sma (commit a6a479d, tag M2, 2026-09-02)
-- [ ] **M3**: 13 built-in factors
-- [ ] **M4**: Signal + BacktestBroker + engine
-- [ ] **M5**: CLI backtest + strategy.yaml
-- [ ] **M6**: PaperBroker + live state 持久化
-- [ ] **M7**: Examples + README + 收尾
+- [x] **M2**: Plugin 框架 + 13 built-in factors (commit a6a479d, tag M2, 2026-09-02)
+- [x] **M3**: BacktestEngine + BacktestBroker + golden_cross 端到端
+      (commits f17cee1/dac24ac, tag M3, 2026-09-02 — factors 提前并入 M2,
+      M3 实际 = 原 PLAN M4 内容: Signal 契约对齐 canonical + factor 参数化
+      + broker Q1-Q4 + engine per-bar loop + 集成 smoke)
+- [ ] **M4**: CLI backtest + strategy.yaml (原 M5)
+- [ ] **M5**: PaperBroker + live state 持久化 (原 M6)
+- [ ] **M6**: Examples + README + 收尾 (原 M7)
 
 每完成一个 milestone:
 1. Commit + push
