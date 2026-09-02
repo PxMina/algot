@@ -193,6 +193,7 @@ algot/
 | 切片闭合 | 闭区间 `[A, B]` 含两端 | 与用户给出的示例一致 |
 | 跨 TF 语法 | `resample()` 聚合函数 | 跟"算法即函数"哲学一致，零新语法 |
 | live 模式 | per-call > live_by_tf > run-level > closed 兜底 | 详见 04 §3.1；4 级优先级，默认安全 |
+| Signal 执行时机 | bar `time + exec_lag` open，exec_lag ≥ 1（默认 1） | 禁 lookahead；标准 backtest 约定 |
 | 多 TF 详细规范 | 见 `04-multi-timeframe.md` | 单独成 spec |
 
 ---
@@ -240,7 +241,12 @@ algot/
          tag: str | None = None   # 可选标签（backtest 分类 / 调试）
          id: str | None = None    # 框架自动注入 UUID（追踪 / cancel）
      ```
-   - **时序约定**：`Signal.time` = 触发 bar 序号（与 Sequence.index 对齐）；emit 时刻 = bar `time` close；消费时刻 = bar `time + 1` open（取决于 G2 执行模型，待定）
+   - **执行模型 (G2)**：Signal 消费时机 = bar `Signal.time + strategy.exec_lag` open
+     - `strategy.exec_lag` in `strategy.yaml`，默认 = 1
+     - 默认值（exec_lag=1）：下 bar open（标准 backtest 约定）
+     - `exec_lag >= 2`：下下 bar open 起（防开盘跳空假信号）
+     - **`exec_lag < 1` 拒绝（ValueError）**：禁止 lookahead
+- **时序约定**：`Signal.time` = 决策 bar 序号（策略决策在 bar `time` close）；**消费时刻 = bar `time + exec_lag` open**（G2 默认下 bar open）
    - **分发机制**：同步回调 / 事件总线
    - **回测 / 实盘挂接点对称 API**
    - **数据类型基线**：numpy / pandas / 自定义 Tensor？
