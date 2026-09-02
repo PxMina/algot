@@ -450,3 +450,4 @@ algot/
 | `03-algorithms.md` | 算法插件机制、注册表、内置库（**已写 v0.3**）|
 | `04-multi-timeframe.md` | 多 TF + live 语义详细规范（**已写**）|
 | `05-signals.md` | Signal 数据结构 + emit/consume 协议（**已写 v0.3**）|
+| `06-brokers.md` | Backtest / Paper / Real broker + Position + CashPool（**已写 v0.3**）|
