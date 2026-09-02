@@ -58,6 +58,58 @@ class Sequence:
 | `meta["dtype"]` | `np.dtype` | 派生自 `data.dtype`（自动同步）|
 | `index` | `pd.DatetimeIndex` 或 `np.ndarray[int64]` | bar START 时间戳（详见 §5）|
 
+### 2.1.1 OHLCVSequence（v1 全暴露）
+
+数据库本身存了完整 OHLCV 5 列，v1 全暴露。`OHLCVSequence` 持有 5 个同 meta/index 的 `Sequence` 实例（**不是** `Sequence` 子类，保持 Sequence = 1D 语义不变）：
+
+```python
+@dataclass
+class OHLCVSequence:
+    open: Sequence
+    high: Sequence
+    low: Sequence
+    close: Sequence
+    volume: Sequence
+    
+    @property
+    def meta(self) -> dict:
+        return self.close.meta        # 5 个 Sequence 共享 meta + index
+    
+    @property
+    def index(self):
+        return self.close.index
+```
+
+**使用场景**：
+```python
+bars = source.load_ohlcv("AAPL", tf=(1, "min"))
+bars.close[0]   # 当前 close
+bars.high[1]    # 1 bar ago high
+bars.volume[0]  # 当前 bar 累计 volume
+```
+
+**Plugin 签名（按需声明）**：
+```python
+# close-only 因子（v1 主流）
+@algot.plugin(category="factor", shape_in={"close": "Sequence"})
+def sma(close, n=20): ...
+
+# OHLCV 因子
+@algot.plugin(category="factor", shape_in={"bars": "OHLCVSequence"})
+def atr(bars, n=14):
+    tr = max(bars.high[0] - bars.low[0],
+             abs(bars.high[0] - bars.close[1]),
+             abs(bars.low[0] - bars.close[1]))
+    ...
+```
+
+**Live partial bar 语义**（与 backtest 对齐）：
+- `open[0]` = 当前 partial bar 第一个 tick
+- `high[0]` = 当前 partial bar 见到过的最高
+- `low[0]` = 当前 partial bar 见到过的最低
+- `close[0]` = 最新 tick 价格
+- `volume[0]` = 累计成交量
+
 ### 2.2 索引语义（00 §3.2 + §6.6 锁死）
 
 **约定**：`seq[N]` = **N 步前**，`seq[0]` = 当前 bar。
@@ -163,7 +215,7 @@ class SqliteSource(BaseSource):
         self.conn = sqlite3.connect(db_path)
         self.conn.execute("PRAGMA journal_mode=WAL")  # 多 reader 不阻 writer
     
-    def load(self, symbol, tf, start=None, end=None) -> Sequence:
+    def load(self, symbol, tf, start=None, end=None, field="close") -> Sequence:
         # 1. 解析 tf → seconds（unit 短长归一化）
         unit_seconds = {"s":1, "min":60, "h":3600, "day":86400, "week":604800, "mo":2592000}
         if tf[1] not in unit_seconds:
@@ -177,15 +229,26 @@ class SqliteSource(BaseSource):
             (symbol, start_ts, end_ts)
         ).fetchall()
         
-        # 3. 构造 Sequence
-        data = np.array([r[4] for r in rows], dtype=np.float64)  # 默认 close
+        # 3. 构造 Sequence（默认 close；其他 field 可选）
+        field_idx = {"open": 1, "high": 2, "low": 3, "close": 4, "volume": 5}[field]
+        data = np.array([r[field_idx] for r in rows], dtype=np.float64)
         index = pd.DatetimeIndex([pd.Timestamp(r[0], unit='s', tz='UTC') for r in rows])
         meta = {"symbol": symbol, "timeframe": tf, "unit": tf[1], "dtype": np.float64}
         
         return Sequence(data=data, meta=meta, index=index)
+    
+    def load_ohlcv(self, symbol, tf, start=None, end=None) -> OHLCVSequence:
+        """加载完整 OHLCV（数据库本身已有 5 列，v1 全暴露）。"""
+        return OHLCVSequence(
+            open=self.load(symbol, tf, start, end, field="open"),
+            high=self.load(symbol, tf, start, end, field="high"),
+            low=self.load(symbol, tf, start, end, field="low"),
+            close=self.load(symbol, tf, start, end, field="close"),
+            volume=self.load(symbol, tf, start, end, field="volume"),
+        )
 ```
 
-**v1 只暴露 `close`** 作为 Sequence.data；OHLCV 完整数据 v2 扩展（5-列 Sequence 或 metadata 携带）。
+**v1 全暴露 OHLCV**：数据库本身存了 5 列（open/high/low/close/volume），通过 `load_ohlcv()` 返回 `OHLCVSequence`（详见 §3.2.5）；单独字段用 `load(field=...)`。
 
 ### 3.3 多 TF 加载
 
@@ -394,7 +457,6 @@ data 层只管 bar data；plugin state / position state 不在 data 层职责范
 - `time_close` 字段（end timestamp）→ bar.end_timestamp
 - InfluxDB / Parquet / CSV source → BaseSource 子类
 - Bar data 增量写入（algot 不负责抓数据，但 v2 可加 ingest CLI）
-- OHLCV 5-列 Sequence → v2 metadata schema 扩展
 - 数据源健康度监控（latency / coverage）→ 00 §3.6 留 v2
 
 ---

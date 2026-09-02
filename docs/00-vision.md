@@ -79,6 +79,7 @@ class Sequence:
 - `meta`：symbol / timeframe / unit / dtype 元信息；`meta["dtype"]` = `data.dtype` 派生（自动同步，不需手填）
 - `index`：时间戳 / bar 序号（v1 用 `pd.DatetimeIndex` 或 `np.ndarray[int64]`）
 - v1 一律 1D（单 symbol）；2D 留给多 symbol v2 扩展
+- **OHLCV 全暴露**（v1）：数据库本身存了 5 列，通过 `OHLCVSequence` 拿到 open/high/low/close/volume（详见 02 §2.1.1 / §3.2.5）
 - **Plugin dtype 严苛契约**：可在 `shape_in={"x": "Sequence[float64]"}` 声明（详见 §6.5）
 
 所有 Sequence 必须支持 §3.2 索引语法（`seq[N]` / `seq[A, B]`）。
