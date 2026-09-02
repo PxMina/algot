@@ -56,13 +56,14 @@
 │       ├── __init__.py
 │       ├── base.py             # BaseSource ABC (02 §3.1)
 │       └── sqlite.py           # SqliteSource impl (02 §3.2)
-├── tests/
-│   ├── test_sequence.py        # index semantics (02 §2.2 / 00 §3.2 / 00 §6.6)
-│   └── test_source_sqlite.py   # load roundtrip + gap fill (02 §3.2 / 02 §7)
-└── examples/
-    └── data/
-        └── AAPL.sqlite         # sample 1min data (生成 / 抓取)
+└── tests/
+    ├── conftest.py             # pytest fixture: 生成 100-bar mock sqlite (in-memory 或 tmp)
+    ├── test_sequence.py        # index semantics (02 §2.2 / 00 §3.2 / 00 §6.6)
+    └── test_source_sqlite.py   # load roundtrip + gap fill (02 §3.2 / 02 §7)
 ```
+
+> **数据路径由用户配置**（per William 反馈）：algot 包**不打包 sample data**；用户自带 sqlite，通过 `strategy.yaml` 的 `data.path` 字段指定（详 M5）。
+> pytest 自己生成 in-memory sqlite fixture，不依赖外部文件。
 
 ### 3.3 关键代码要点
 
@@ -101,11 +102,12 @@ cd ~/algot
 pip install -e .[dev]
 pytest tests/test_sequence.py tests/test_source_sqlite.py -v
 
-# smoke
+# smoke (用 placeholder path，用户填自己 sqlite 路径)
 python -c "
 from algot import Sequence, OHLCVSequence
 from algot.source import SqliteSource
-src = SqliteSource('examples/data/AAPL.sqlite')
+# ↓ 用户填实际路径 (详 M5 strategy.yaml data.path)
+src = SqliteSource('<USER_DB_PATH>')
 bars = src.load_ohlcv('AAPL', (1, 'min'))
 print(f'loaded {len(bars.close)} bars')
 print(f'current close: {bars.close[0]}')
@@ -119,11 +121,8 @@ except NotImplementedError as e: print(f'  OK: {e}')
 
 ### 3.5 风险
 
-- **sqlite 数据**：如果没现成 AAPL 1min 数据，生成 mock data：
-  ```python
-  # 用 yfinance 或 random walk 生成 1 周 1min 数据
-  ```
 - **macOS arm64** + numpy/pandas 兼容性：本机已验证（`~/qlibex` 用同样的栈）
+- **DB schema 不匹配**：用户 sqlite 可能用不同 schema。M1 SqliteSource 实现必须**先 detect schema**，缺列时报清晰错误（不静默 fallback）。详见 02 §3.2。
 
 ---
 
@@ -441,11 +440,13 @@ examples/
 
 ### 7.3 strategy.yaml schema
 
+**数据路径由用户在 `data.path` 指定**（per William 反馈，无全局 algot.yaml 配置）：
+
 ```yaml
 # examples/golden_cross.yaml
 data:
   source: sqlite
-  path: examples/data/AAPL.sqlite
+  path: /Users/william/data/algot.db   # ← 用户 sqlite 绝对路径
 
 strategies:
   - name: aapl_long
@@ -602,11 +603,19 @@ algot run --reset examples/golden_cross.yaml
 
 | 风险 | 缓解 |
 |---|---|
-| sqlite 数据缺失 | M1 起生成 mock data（yfinance / random walk）|
 | macOS arm64 + numpy/pandas | 本机已验证（qlibex 同栈）|
+| 用户 sqlite schema 不一致 | M1 detect schema + 缺列清晰报错（不静默） |
 | adx / resample 复杂度 | 单元测试用 fixture + reference 手算 |
 | Stateful plugin 序列化 | dict + dataclass 都行；pickle 暂用 |
 | Engine ↔ plugin store 集成 | M4 内分解，03 §10.2 明 |
+| DB path 写错 / 文件不存在 | strategy.yaml 启动时 validate + 清晰报错 |
+
+### 11.1.1 配置模型（v1）
+
+- **不打包 sample data**：用户自带 sqlite（per William 反馈）
+- **数据路径**：仅 `strategy.yaml` `data.path`（无全局 `~/.algot/config.yaml`）
+- **CLI override**：v2+ 加 `--data-path` / `--db` flag（M7 不做）
+- **多 strategy 共享 path**：用同一份 `strategy.yaml` 配多个 `strategies:` 条目即可
 
 ### 11.2 YAGNI（v1 不做）
 
