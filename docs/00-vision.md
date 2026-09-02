@@ -115,6 +115,52 @@ diff = close - sma              # 序列对序列运算，结果仍带 bar 概�
 diff[5, 10]                     # 5~10 步前的差分数组
 ```
 
+### 3.4 Plugin warmup / lookback 协议
+
+**对齐 TradingView 默认行为**：silent NaN + 静默跳过暖机期信号。框架兜底，用户无需 `if not na(...)` 检查。
+
+**Plugin 声明**：
+
+```python
+@algot.plugin(
+    category="factor",
+    min_bars=20,         # ← 静态声明，plugin 产生第一个有效输出所需的最少 bar 数
+    ...
+)
+def sma(close, period=20):
+    return close.rolling(period).mean()
+```
+
+- `min_bars`：静态值（不解析运行时参数）；默认 `min_bars=0`（无前置 bar 需求）
+
+**框架行为**：
+
+| 场景 | 行为 |
+|---|---|
+| **Backtest** | bar 0 ~ min_bars-1 输出 NaN；bar min_bars 起有效 |
+| **Live** | bar_count < min_bars 时 signal 状态 = "warmup"，不发单 |
+| **数据不足** | `len(data) < min_bars` → warning + 全 NaN（不 raise，对齐 TradingView） |
+| **暖机期 Signal** | 框架隐式吞掉（user 无需 `if not na(signal)`） |
+| **多 plugin 串联** | 总 `min_bars` = max(各 plugin min_bars)（框架自动算） |
+| **Backtest 完成** | stdout INFO 提示跳过的暖机区间 |
+
+**INFO 日志示例**：
+```
+[INFO] sma: 跳过前 19 bar 暖机期（min_bars=20）
+[INFO] 实际回测区间：2020-01-21 ~ 2024-12-31（vs 数据 2020-01-01 ~ 2024-12-31）
+```
+
+**变长参数**（如 `sma(close, period=N)`）：plugin 静态声明 `min_bars` 为推荐默认；运行时 period > min_bars 时 plugin 自负责（`rolling(N).min_periods=N`），框架不解析参数。
+
+**状态机 plugin**（Wyckoff / Kalman）：`min_bars` 同样适用，表示 state 稳定所需 bar 数。协议复用，无新机制。
+
+**对比 TradingView**：
+
+- ✅ silent NaN（不 raise）
+- ✅ 暖机期信号静默忽略
+- ✅ 不强制最小数据长度
+- ➕ INFO 日志增加透明度（TradingView 无）
+
 ---
 
 ## 4. 模块划分（粗）
@@ -180,7 +226,7 @@ algot/
      - `risk`（positions → Signal reduce/close）— stop_loss / max_drawdown
      - `scheduler`（time → bar）— session_calendar
    - **v1 落地范围**：仅 `factor` + `signal` 两类够用；其余 4 类留 v1.x
-   - **Plugin 元数据**：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, deps=[...], version=...)`
+   - **Plugin 元数据**：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, min_bars=N, deps=[...], version=...)`（详见 §3.4 暖机协议）
    - **Signal 数据结构**：symbol / time / direction / price / size / 有效期 / ...
    - **时序约定**：信号相对于 bar 触发点
    - **分发机制**：同步回调 / 事件总线
