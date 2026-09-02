@@ -14,7 +14,7 @@
 - 接入由其他工具抓取好的 OHLCV 等交易数据（sqlite 文件，路径由 config 配置）
 - 提供一组可扩充的**算法 / 指标**（库 + 函数），由算法开发者自由组合
 - 策略层**只产信号**（signal），不感知下游是回测引擎还是实盘下单
-- v1 范围：**策略 + 回测**（实盘下单的 broker 接口定义好，留 stub / 不接真实券商）
+- v1 范围：**策略 + 回测 + 最小插件骨架**（factor / signal 两类 plugin + 元数据契约就够；完整 6 类 plugin 分类留 v1.x；实盘下单的 broker 接口定义好，留 stub / 不接真实券商）
 
 ### 1.1 非目标（v1 暂不做）
 
@@ -65,6 +65,19 @@
 - 算法层**不感知存储**，只接收"对齐好的序列"作为输入
 - 算法之间可以互相组合，组合后的结果**也**作为序列参与下一层
 
+**Sequence 数据结构（最小字段，所有算法 I/O 走这个）**：
+
+```
+Sequence(data=..., meta={symbol, timeframe, unit, dtype}, index=...)
+```
+
+- `data`：一维数值（numpy array 或 pandas Series）
+- `meta`：symbol / timeframe / unit / dtype 元信息
+- `index`：时间戳 / bar 序号
+- v1 一律 1D（单 symbol）；2D 留给多 symbol v2 扩展
+
+所有 Sequence 必须支持 §3.2 索引语法（`seq[N]` / `seq[A, B]`）。
+
 ---
 
 ## 3. 核心规范：偏移指针（Offset Syntax）
@@ -110,9 +123,7 @@ diff[5, 10]                     # 5~10 步前的差分数组
 algot/
 ├── config/             # 配置加载（数据目录、表名、timeframe 等）
 ├── data/               # 数据层：从 sqlite 加载，对齐，暴露统一序列接口
-├── algo/               # 算法层：插件机制、注册表、内置库
-│   ├── builtin/        # 内置指标（sma/ema/rsi/...）
-│   └── contrib/        # 用户自定义算法（外部加载）
+├── algo/               # 算法层：插件机制、统一注册表（内置 + 用户插件平铺，无 builtin/contrib 之分）
 ├── strategy/           # 策略层：消费序列，产出 Signal
 ├── backtest/           # 回测层：消费 Signal + 历史数据，模拟成交，产出 PnL / sharpe / drawdown
 ├── broker/             # 经纪层接口：消费 Signal，调用券商 API（v1 stub / v2 真实接入）
@@ -131,7 +142,7 @@ algot/
 | 决策点 | 选择 | 理由 |
 |---|---|---|
 | 数据格式 | sqlite 文件 | 与外部抓取工具约定，algot 不负责抓 |
-| 算法组合 | 表达式/DSL（待定）| 插件式要求可读、可序列化 |
+| 算法组合 | 一切皆插件（统一 I/O） | v1 函数调用 + 注册；v2+ DAG 编排 |
 | 时间步定义 | bar index 而非秒数 | 多 timeframe 友好 |
 | 切片闭合 | 闭区间 `[A, B]` 含两端 | 与用户给出的示例一致 |
 | 跨 TF 语法 | `resample()` 聚合函数 | 跟"算法即函数"哲学一致，零新语法 |
@@ -148,7 +159,7 @@ algot/
    - 单 TF 偏移：`bar[i]` = i 步前
    - 跨 TF：`resample(seq, N, unit)` 聚合函数
    - OHLCV 标准聚合 / 整点对齐 / 升采样 only
-   - live 语义：run-level 全局默认 + per-call override，不支持 per-TF/per-symbol
+   - live 语义：per-call > live_by_tf > run-level > closed 兜底（详见 04 §3.1）
 
 2. **多 symbol 支持**：单次回测是单标的还是要支持股票组合？
 
@@ -160,21 +171,26 @@ algot/
    - **v1**：用户用 `@algot.plugin(category=..., pure=True, ...)` 注册新插件，可被 DSL 引用
    - **v2+**：图式串联（DAG），节点 = 插件调用，边 = 数据流；DSL 字符串 = DAG 序列化形式（仅内部）
 
-5. **统一 I/O 约定 / Signal 接口**（v1 必须先定，否则 §1.2 + 插件架构落地不了）：
-   - **统一 I/O 约定**：所有插件的输入输出遵循固定 shape 协议
-   - Signal 数据结构（symbol / time / direction / price / size / 有效期 / ...）
-   - 时序约定（信号相对于 bar 触发点）
-   - 分发机制（同步回调 / 事件总线）
-   - 回测 / 实盘挂接点的对称 API
+5. **插件 I/O 契约（含 Signal 接口）**（v1 必须先定，否则插件骨架 + §1.2 都落不了）：
+   - **插件分类（决定 I/O 约定形态）**：
+     - `factor`（series → series）— sma / ema / rsi / 用户自定义指标
+     - `signal`（data → Signal）— wyckoff / breakout_detector / 信号生成
+     - `source`（query → bars）— yahoo / binance / csv 数据源
+     - `sizer`（returns → fraction）— kelly / fixed_frac 仓位
+     - `risk`（positions → Signal reduce/close）— stop_loss / max_drawdown
+     - `scheduler`（time → bar）— session_calendar
+   - **v1 落地范围**：仅 `factor` + `signal` 两类够用；其余 4 类留 v1.x
+   - **Plugin 元数据**：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, deps=[...], version=...)`
+   - **Signal 数据结构**：symbol / time / direction / price / size / 有效期 / ...
+   - **时序约定**：信号相对于 bar 触发点
+   - **分发机制**：同步回调 / 事件总线
+   - **回测 / 实盘挂接点对称 API**
+   - **数据类型基线**：numpy / pandas / 自定义 Tensor？
+   - **错误传播**：插件 throw vs 返回 NaN？（默认 throw + 数据层 NaN 透传）
+   - **shape 兼容**：(a) 单 symbol 1D / (b) 多 symbol 2D 下插件声明接受哪种
+   - **API 演进策略**：v1.x 内 additive only（加字段 = 默认值）；v2.0 才允许 breaking
 
 6. **负数索引**：支持 Python 风格 `seq[-1]` 还是禁止？
-
-7. **插件分类 + 元数据契约**：
-   - 插件类别（决定 I/O 约定形态）：factor（series→series）/ signal（data→Signal）/ source（query→bars）/ sizer（returns→fraction）/ risk（positions→Signal）/ scheduler（time→bar）/ 其他？
-   - 插件元数据：`@algot.plugin(category=..., shape_in=..., shape_out=..., pure=True, deps=[...], version=...)`
-   - 数据类型基线：numpy / pandas / 自定义 Tensor？
-   - 错误传播：插件 throw vs 返回 NaN？
-   - shape 兼容：(a) 单 symbol 1D / (b) 多 symbol 2D 下插件声明接受哪种
 ---
 
 ## 7. 文档索引
